@@ -1,0 +1,31 @@
+name: Security and Build
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install --no-audit --no-fund
+      - run: npm run security:check
+      - run: npm run typecheck
+      - run: npm audit --omit=dev --audit-level=high
+      - run: npm run build
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/build
+          APP_ORIGIN: http://localhost:3000
+          SESSION_SECRET: build-only-secret-build-only-secret-1234567890
+          PUBLIC_ID_PEPPER: build-only-public-id-pepper
+          EXTERNAL_ID_PEPPER: build-only-external-id-pepper
+          IP_HASH_PEPPER: build-only-ip-pepper
+          APP_DATA_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+          NEXT_PUBLIC_DEMO_MODE: "false"

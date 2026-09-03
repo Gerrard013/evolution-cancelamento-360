@@ -1,0 +1,14 @@
+node_modules/
+.next/
+.env
+.env.*
+!.env.example
+.DS_Store
+*.log
+coverage/
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+security-reports/

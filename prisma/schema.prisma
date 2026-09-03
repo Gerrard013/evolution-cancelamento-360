@@ -1,0 +1,228 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RequestStatus {
+  DRAFT
+  SENT
+  UNDER_REVIEW
+  APPROVED
+  MANUAL_REVIEW
+  EVO_CANCEL_REQUESTED
+  EVO_CANCELLED
+  CANCELLED_CONFIRMED
+  REFUND_PENDING
+  REFUND_REGISTERED
+  COMPLETED
+  REJECTED
+  CANCELLED_BY_CUSTOMER
+}
+
+enum UserRole {
+  ATTENDANCE
+  ANALYST
+  FINANCE
+  MANAGER
+  ADMIN
+  AUDITOR
+}
+
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  role      UserRole
+  unit      String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  events    AuditEvent[]
+}
+
+// LGPD: não persistimos CPF no fluxo público. O ID do EVO é pseudonimizado:
+// hash para busca e ciphertext para chamadas server-side quando estritamente necessário.
+model Customer {
+  id                   String   @id @default(cuid())
+  externalIdHash       String?  @unique
+  externalIdCiphertext String?
+  displayName          String
+  contactHint          String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  contracts            Contract[]
+  requests             CancellationRequest[]
+  accessGrants         PublicAccessGrant[]
+}
+
+model Contract {
+  id                   String   @id @default(cuid())
+  externalIdHash       String?  @unique
+  externalIdCiphertext String?
+  customerId           String
+  unit                 String
+  planName             String
+  planType             String
+  startDate            DateTime
+  endDate              DateTime?
+  amountPaid           Decimal  @db.Decimal(12, 2)
+  recurring            Boolean  @default(false)
+  status               String   @default("ACTIVE")
+  metadata             Json?
+  syncedAt             DateTime?
+  customer             Customer @relation(fields: [customerId], references: [id])
+  requests             CancellationRequest[]
+  accessGrants         PublicAccessGrant[]
+
+  @@index([customerId, status])
+}
+
+model PublicAccessGrant {
+  id          String   @id @default(cuid())
+  codeHash    String   @unique
+  customerId  String
+  contractId  String
+  active      Boolean  @default(true)
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+  lastUsedAt  DateTime?
+  createdBy   String?
+  customer    Customer @relation(fields: [customerId], references: [id])
+  contract    Contract @relation(fields: [contractId], references: [id])
+
+  @@index([contractId, active])
+}
+
+model CancellationRequest {
+  id                 String        @id @default(cuid())
+  protocol           String        @unique
+  activeKey          String?       @unique
+  customerId         String
+  contractId         String
+  unit               String
+  reasonCode         String
+  reasonDetails      String?
+  desiredDate        DateTime
+  status             RequestStatus @default(SENT)
+  slaDueAt           DateTime?
+  currentOwner       String?
+  termVersion        String
+  termAcceptedAt     DateTime
+  evoOperationId     String?
+  evoLastErrorCode   String?
+  evoLastAttemptAt   DateTime?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+  customer           Customer      @relation(fields: [customerId], references: [id])
+  contract           Contract      @relation(fields: [contractId], references: [id])
+  calculations       RefundCalculation[]
+  refund             Refund?
+  attachments        Attachment[]
+  events             AuditEvent[]
+
+  @@index([unit, status])
+  @@index([contractId, status])
+}
+
+model CalculationRule {
+  id            String   @id @default(cuid())
+  version       String   @unique
+  name          String
+  percentage    Decimal? @db.Decimal(7, 4)
+  effectiveFrom DateTime
+  effectiveTo   DateTime?
+  criteria      Json
+  active        Boolean  @default(false)
+  approvedBy    String?
+  approvedAt    DateTime?
+  createdAt     DateTime @default(now())
+  calculations  RefundCalculation[]
+}
+
+model RefundCalculation {
+  id              String   @id @default(cuid())
+  requestId       String
+  ruleId          String
+  eligibleBase    Decimal  @db.Decimal(12, 2)
+  unusedBalance   Decimal  @db.Decimal(12, 2)
+  deduction       Decimal  @db.Decimal(12, 2)
+  priorRefunds    Decimal  @db.Decimal(12, 2)
+  estimatedRefund Decimal  @db.Decimal(12, 2)
+  memory          Json
+  createdAt       DateTime @default(now())
+  request         CancellationRequest @relation(fields: [requestId], references: [id])
+  rule            CalculationRule @relation(fields: [ruleId], references: [id])
+}
+
+model Refund {
+  id             String   @id @default(cuid())
+  requestId      String   @unique
+  approvedAmount Decimal  @db.Decimal(12, 2)
+  executedAmount Decimal  @db.Decimal(12, 2)
+  executedAt     DateTime
+  method         String
+  transactionRef String?
+  receiptUrl     String?
+  request        CancellationRequest @relation(fields: [requestId], references: [id])
+}
+
+// Upload público não é habilitado. Comprovantes administrativos devem entrar por storage
+// privado e, antes de ficarem disponíveis, passar por validação de tipo + antivírus.
+model Attachment {
+  id            String   @id @default(cuid())
+  requestId     String
+  type          String
+  originalName  String
+  objectKey     String   @unique
+  mimeType      String
+  sizeBytes     Int
+  sha256        String
+  malwareStatus String   @default("QUARANTINED")
+  createdAt     DateTime @default(now())
+  request       CancellationRequest @relation(fields: [requestId], references: [id])
+}
+
+model AuditEvent {
+  id         String   @id @default(cuid())
+  requestId  String?
+  userId     String?
+  action     String
+  entity     String
+  entityId   String
+  before     Json?
+  after      Json?
+  ipHash     String?
+  userAgentHash String?
+  createdAt  DateTime @default(now())
+  request    CancellationRequest? @relation(fields: [requestId], references: [id])
+  user       User? @relation(fields: [userId], references: [id])
+
+  @@index([entity, entityId])
+  @@index([createdAt])
+}
+
+model EvoApiUsage {
+  monthKey  String   @id
+  hitCount  Int      @default(0)
+  updatedAt DateTime @updatedAt
+}
+
+model EvoCache {
+  cacheKey  String   @id
+  payload   Json
+  expiresAt DateTime
+  updatedAt DateTime @updatedAt
+
+  @@index([expiresAt])
+}
+
+model EvoWebhookEvent {
+  eventIdHash String   @id
+  eventType   String
+  payloadHash String
+  receivedAt  DateTime @default(now())
+  processedAt DateTime?
+}
