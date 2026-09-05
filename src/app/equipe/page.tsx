@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db/prisma";
 import { requireAdminPage } from "@/lib/auth/require-admin";
+import { friendlyStatus } from "@/lib/ui/status";
 import AdminTools from "./AdminTools";
 
 function money(value: number) {
@@ -10,7 +11,7 @@ export default async function EquipePage() {
   const admin = await requireAdminPage();
   const rows = await prisma.cancellationRequest.findMany({
     orderBy: { createdAt: "desc" },
-    take: 20,
+    take: 30,
     include: {
       customer: { select: { displayName: true } },
       contract: { select: { planName: true } },
@@ -20,51 +21,39 @@ export default async function EquipePage() {
   }).catch(() => []);
 
   const open = rows.filter(r => !["COMPLETED", "REJECTED", "EVO_CANCELLED", "CANCELLED_BY_CUSTOMER"].includes(r.status)).length;
-  const critical = rows.filter(r => r.slaDueAt && r.slaDueAt <= new Date(Date.now() + 24 * 60 * 60 * 1000) && !["COMPLETED", "REJECTED", "EVO_CANCELLED"].includes(r.status)).length;
+  const waitingSignature = rows.filter(r => r.status === "AWAITING_SIGNATURE").length;
   const estimated = rows.reduce((sum, r) => sum + Number(r.calculations[0]?.estimatedRefund || 0), 0);
 
   return (
-    <main className="ops-shell">
-      <aside className="sidebar glass-dark">
+    <main className="ops-shell simple-ops">
+      <aside className="sidebar glass-dark simple-sidebar">
         <a href="/" className="ops-brand"><span className="brand-dot"/><b>EVOLUTION 360</b></a>
-        <nav>
-          <a className="active">◫ Visão geral</a><a>⇄ Solicitações</a><a>◉ SLA & Pendências</a><a>◈ Regras</a><a>▤ Relatórios</a><a>⌁ Auditoria</a><a>⚙ Configurações</a>
-        </nav>
-        <div className="sidebar-foot"><small>SEGURANÇA</small><b>Admin autenticado</b><span className="status-line"><i/> Sessão curta + cookie HttpOnly</span></div>
+        <div className="side-summary"><span>Central de cancelamentos</span><b>Condor • Umarizal</b><small>Atendimento, termos, análise e estorno.</small></div>
+        <nav><a className="active">Painel da equipe</a></nav>
+        <div className="sidebar-foot"><small>ACESSO DA EQUIPE</small><b>Administrador</b><span>{admin.sub}</span></div>
       </aside>
 
       <section className="ops-main">
-        <header className="ops-header"><div><p className="eyebrow">CENTRAL DA EQUIPE</p><h1>Painel de cancelamentos</h1></div><div className="ops-user"><span>AD</span><div><b>Administrador</b><small>{admin.sub}</small></div></div></header>
+        <header className="ops-header"><div><p className="eyebrow">CENTRAL DA EQUIPE</p><h1>Cancelamentos</h1><p className="header-help">Comece pesquisando o aluno pela matrícula EVO. O restante do fluxo é guiado.</p></div><div className="ops-user"><span>EV</span></div></header>
 
-        <div className="metric-grid">
-          <article><small>EM ABERTO</small><b>{open}</b><span>fila atual</span></article>
-          <article><small>SLA &lt; 24H</small><b>{critical}</b><span className={critical ? "danger" : ""}>prioridade operacional</span></article>
-          <article><small>ESTORNO ESTIMADO</small><b>{money(estimated)}</b><span>somente prévias registradas</span></article>
-          <article><small>PRIVACIDADE</small><b>ID</b><span>sem CPF no portal público</span></article>
+        <div className="metric-grid compact-metrics">
+          <article><small>EM ANDAMENTO</small><b>{open}</b><span>solicitações abertas</span></article>
+          <article><small>AGUARDANDO ASSINATURA</small><b>{waitingSignature}</b><span>termos ainda não enviados</span></article>
+          <article><small>ESTORNO EM PRÉVIA</small><b>{money(estimated)}</b><span>valor estimado, sujeito à conferência</span></article>
         </div>
 
         <AdminTools />
 
-        <div className="ops-grid">
-          <section className="queue glass">
-            <div className="section-title"><div><p className="eyebrow">FILA OPERACIONAL</p><h2>Solicitações</h2></div><button disabled>Últimas 20</button></div>
-            <div className="queue-table">
-              <div className="tr th"><span>Protocolo</span><span>Cliente</span><span>Status</span><span>SLA</span><span>Valor</span></div>
-              {rows.length === 0 ? <div className="empty-state">Nenhuma solicitação registrada ainda.</div> : rows.map((r, idx) => {
-                const amount = r.calculations[0]?.estimatedRefund ? Number(r.calculations[0].estimatedRefund) : null;
-                const priority = r.slaDueAt && r.slaDueAt <= new Date(Date.now() + 24 * 60 * 60 * 1000) ? "critical" : "normal";
-                return <div className={`tr ${idx === 0 ? "selected" : ""}`} key={r.protocol}><span><b>#{r.protocol}</b><small>{r.unit} • {r.contract.planName}</small></span><span>{r.customer.displayName}</span><span><i className={`badge ${priority}`}>{r.status}</i></span><span>{r.slaDueAt ? r.slaDueAt.toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—"}</span><span>{amount === null ? "—" : money(amount)}{r.attachments[0] ? <a className="doc-link" href={`/api/admin/documents/${r.attachments[0].id}`}>Termo assinado</a> : null}</span></div>;
-              })}
-            </div>
-          </section>
-
-          <aside className="case-detail glass-dark">
-            <div className="detail-top"><div><p className="eyebrow">CONTROLES ATIVOS</p><h2>Hardening</h2></div><span className="badge">v2</span></div>
-            <div className="person-card"><b>API EVO somente no backend</b><span>Token em variável secreta do Railway</span><small>Nenhuma chave usa prefixo NEXT_PUBLIC_</small></div>
-            <div className="timeline-mini"><div className="done"><i/>ID público pseudônimo<span>LGPD</span></div><div className="done"><i/>Rate limit + origem confiável<span>API</span></div><div className="done"><i/>PDF/JPG/PNG privado + hash SHA-256<span>DOC</span></div><div className="done"><i/>CSP + HSTS + anti-clickjacking<span>WEB</span></div><div className="active"><i/>Escrita EVO somente por feature flag<span>SAFE</span></div></div>
-            <div className="calc-mini"><div><span>Upload do termo</span><b>Protegido</b></div><div><span>Estorno automático</span><b>Bloqueado</b></div><hr/><div><span>Cancelamento direto</span><strong>Homologável</strong></div><small>Somente ativa quando endpoint e regra do EVO estiverem confirmados.</small></div>
-          </aside>
-        </div>
+        <section className="queue glass full-queue">
+          <div className="section-title"><div><p className="eyebrow">SOLICITAÇÕES RECENTES</p><h2>Acompanhar pedidos</h2><p className="section-help">Status em linguagem operacional, sem códigos internos.</p></div></div>
+          <div className="queue-table friendly-table">
+            <div className="tr th"><span>Protocolo</span><span>Aluno</span><span>Unidade / Plano</span><span>Status</span><span>Estorno</span></div>
+            {rows.length === 0 ? <div className="empty-state">Nenhuma solicitação registrada ainda.</div> : rows.map((r) => {
+              const amount = r.calculations[0]?.estimatedRefund ? Number(r.calculations[0].estimatedRefund) : null;
+              return <div className="tr" key={r.protocol}><span><b>#{r.protocol}</b><small>{r.createdAt.toLocaleDateString("pt-BR")}</small></span><span>{r.customer.displayName}</span><span><b>{r.unit}</b><small>{r.contract.planName}</small></span><span><i className="badge">{friendlyStatus(r.status)}</i></span><span>{amount === null ? "—" : money(amount)}{r.attachments[0] ? <a className="doc-link" href={`/api/admin/documents/${r.attachments[0].id}`}>Baixar termo assinado</a> : null}</span></div>;
+            })}
+          </div>
+        </section>
       </section>
     </main>
   );

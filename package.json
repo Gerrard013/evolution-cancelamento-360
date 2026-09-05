@@ -1,6 +1,6 @@
 {
   "name": "evolution-cancelamento-360-ultra",
-  "version": "3.0.0",
+  "version": "4.0.0",
   "private": true,
   "engines": {
     "node": ">=22 <23"

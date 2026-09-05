@@ -1,60 +1,75 @@
-# Evolution Cancelamento 360 — Final v3
+# Evolution Cancelamento 360 — Final Operacional v4
 
-Sistema web para solicitação, geração do termo, assinatura externa, upload do termo assinado, prévia de estorno, fila administrativa e integração segura com EVO/W12.
+Versão focada em uso real, com telas simplificadas para equipe e aluno. O sistema permite localizar o aluno pela matrícula EVO, identificar Condor/Umarizal, gerar o termo, apresentar prévia de estorno quando aplicável, receber o termo assinado e acompanhar o pedido.
 
-## Fluxo real de uso
+## Fluxo de uso
 
-1. A equipe entra em `/equipe` e pesquisa a matrícula/ID EVO (ex.: `29965`).
-2. O backend consulta o EVO, salva somente os dados necessários e identifica a unidade **Condor** ou **Umarizal**.
-3. A equipe seleciona o contrato e gera um **ID temporário de acesso**. A matrícula previsível não é usada sozinha no portal público para evitar IDOR/enumeration.
-4. O aluno entra em `/cliente`, confirma o contrato, informa motivo/data, vê a prévia financeira quando segura e completa os dados mínimos do termo.
-5. O sistema gera o termo em PDF já preenchido e um protocolo único.
-6. O aluno baixa, assina e envia o termo assinado (PDF/JPG/PNG, até 8 MB).
-7. O arquivo fica privado no PostgreSQL, com hash SHA-256, validação de magic bytes/MIME/tamanho e bloqueio de conteúdo ativo conhecido em PDF.
-8. Depois do upload, o pedido vai para análise ou, quando a escrita EVO estiver homologada e habilitada, o backend envia o cancelamento ao EVO com idempotência.
-9. A equipe vê o pedido no painel, baixa o termo assinado e acompanha estorno/status/auditoria.
+### Equipe
+1. Acesse `/equipe`.
+2. Digite a matrícula EVO, por exemplo `29965`.
+3. Se a API EVO já estiver conectada, o sistema traz nome, unidade, plano e contrato automaticamente.
+4. Se a API ainda não estiver conectada, use o cadastro rápido com os mesmos dados vistos no EVO/W12. Isso permite começar a operar antes da integração.
+5. Escolha o contrato e clique em **Iniciar cancelamento**.
+6. O sistema cria um **link seguro** válido por 24 horas. A equipe só precisa copiar o link ou abrir o portal do aluno. O código aleatório não é exibido como campo para digitação.
 
-## Por que o aluno não entra apenas com o ID 29965?
+### Aluno
+1. Abre o link seguro recebido da equipe.
+2. Confere nome, unidade e plano.
+3. Informa motivo e data desejada.
+4. Visualiza a prévia de estorno quando houver dados suficientes para cálculo seguro.
+5. Preenche os dados mínimos do termo.
+6. Gera e baixa o PDF do termo.
+7. Assina e envia o PDF/JPG/PNG assinado pelo próprio portal.
+8. Recebe o protocolo e acompanha a conclusão do pedido.
 
-IDs numéricos internos normalmente são previsíveis. Usar apenas `29965` como credencial pública permitiria tentativas como `29964`, `29966` etc. O sistema usa o ID EVO **para a equipe localizar o cadastro**, e emite um código temporário aleatório para o aluno. Isso reduz risco de IDOR sem exigir CPF.
+## Segurança do acesso
 
-Trocar CPF por ID não elimina a LGPD: matrícula/ID vinculável ao aluno continua sendo dado pessoal. O projeto aplica minimização, pseudonimização, criptografia e controle de acesso.
+A matrícula EVO é usada pela equipe para localizar o cadastro, mas não funciona como senha pública. Matrículas como `29965` são previsíveis e não devem ser usadas sozinhas para abrir dados de contrato. A v4 usa um link temporário de alta entropia, colocado no fragmento da URL (`#acesso=`), que não é enviado ao servidor em logs de navegação. Ao abrir o portal, o token é trocado por uma sessão HttpOnly e removido da barra de endereço.
 
-## Termos fornecidos
+O portal não solicita CPF/RG. A matrícula EVO continua sendo dado pessoal quando vinculável ao aluno, portanto o sistema mantém minimização, criptografia, HMAC, controle de acesso e trilha de auditoria.
 
-Os PDFs originais estão preservados em `docs/templates-original/` apenas como referência operacional. A versão digital gerada pelo sistema mantém as condições informadas nos modelos, mas substitui CPF/RG por identificação interna validada pelo sistema. Essa adaptação deve ser aprovada formalmente pela Evolution antes de uso jurídico definitivo.
+## Operação antes da API EVO
 
-- Recorrente: referência de multa de R$ 258,00 e antecedência de 30 dias.
-- Anual: referência de 14,4% + 10% e prazo informado de até 60 dias úteis para eventual pagamento.
+A v4 pode ser usada em `EVO_INTEGRATION_MODE="manual"`. A equipe informa manualmente os dados necessários do contrato e o fluxo completo de termo/upload funciona. Quando a API for configurada, a busca por matrícula passa a preencher esses dados automaticamente.
 
-A prévia financeira é deliberadamente tratada como **estimativa**, nunca como autorização automática de estorno.
+## Termos
 
-## Rodar localmente
+Os modelos originais permanecem em `docs/templates-original/`. O termo digital é gerado pelo sistema com matrícula, nome, unidade, plano, datas, motivo e protocolo, sem exigir CPF/RG no portal.
 
-```bash
-npm install
-cp .env.example .env
-npm run prisma:generate
-npm run prisma:push
-npm run dev
+- Recorrente: referência operacional de multa de R$ 258,00 e antecedência de 30 dias.
+- Anual: referência operacional de 14,4% + 10% e prazo informado de até 60 dias úteis para eventual pagamento.
+
+A prévia financeira é uma estimativa sujeita à conferência administrativa/financeira.
+
+## Railway
+
+Variáveis mínimas para começar em modo manual:
+
+```env
+DATABASE_URL="..."
+APP_ORIGIN="https://SEU-DOMINIO.up.railway.app"
+NEXT_PUBLIC_DEMO_MODE="false"
+SESSION_SECRET="..."
+PUBLIC_ID_PEPPER="..."
+EXTERNAL_ID_PEPPER="..."
+APP_DATA_ENCRYPTION_KEY="..."
+IP_HASH_PEPPER="..."
+ADMIN_EMAIL="..."
+ADMIN_PASSWORD_HASH="..."
+EVO_INTEGRATION_MODE="manual"
+EVO_WRITE_ENABLED="false"
+CUSTOMER_DIRECT_CANCELLATION="false"
 ```
 
-Acesse:
+Depois conecte a API EVO primeiro em modo `read`. Escrita e cancelamento direto devem ser habilitados somente após homologação dos endpoints reais.
 
-- Portal público: `http://localhost:3000/cliente`
-- Equipe: `http://localhost:3000/equipe/login`
-- Healthcheck: `http://localhost:3000/api/health`
+## Verificações
 
-## Antes de produção
+```bash
+npm run security:check
+npm run production:check
+npm run typecheck
+npm run build
+```
 
-1. Criar PostgreSQL no Railway e preencher `DATABASE_URL`.
-2. Gerar todos os segredos fortes no Railway; nunca commitar `.env`.
-3. Configurar `ADMIN_EMAIL`, `ADMIN_PASSWORD_HASH` e TOTP.
-4. Configurar a API EVO primeiro em modo `read`.
-5. Confirmar os endpoints reais na documentação/homologação EVO.
-6. Testar o ID de um aluno de Condor e de Umarizal.
-7. Validar os cálculos com o financeiro.
-8. Validar o texto digital do termo com a gestão/jurídico.
-9. Só então habilitar `EVO_WRITE_ENABLED=true` e, por último, `CUSTOMER_DIRECT_CANCELLATION=true`.
-
-Leia `docs/FINAL_RUNBOOK.md` e `docs/EVO_CONNECTION_CHECKLIST.md` antes da homologação.
+O `security:check` desta entrega foi executado com sucesso. O ambiente de geração não conseguiu concluir `npm install` por indisponibilidade de rede, então `build` e `typecheck` completos devem ser executados no Mac/Railway com as dependências instaladas.
