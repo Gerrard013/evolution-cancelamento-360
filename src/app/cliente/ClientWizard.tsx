@@ -1,193 +1,48 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
-type ContractView = {
-  id: string;
-  unit: string;
-  planName: string;
-  planType: string;
-  startDate: string;
-  endDate?: string | null;
-  amountPaid: number;
-  recurring: boolean;
-  status: string;
-};
+type ContractView = { id:string; unit:string; planName:string; planType:string; startDate:string; endDate?:string|null; amountPaid:number; recurring:boolean; status:string };
+type Preview = { eligible:boolean; reason?:string; rule?:{version:string;name:string;percentage:number}; calculation?:{unusedBalance:number;deduction:number;estimatedRefund:number} };
+const steps=["Acesso","Contrato","Motivo","Prévia","Dados","Termo","Assinatura"];
+const reasonMap:Record<string,string>={Mudança:"MUDANCA",Financeiro:"FINANCEIRO",Saúde:"SAUDE",Horário:"HORARIO",Atendimento:"ATENDIMENTO",Outro:"OUTRO"};
 
-type Preview = {
-  eligible: boolean;
-  reason?: string;
-  rule?: { version: string; name: string; percentage: number };
-  calculation?: { unusedBalance: number; deduction: number; estimatedRefund: number };
-};
-
-const steps = ["Acesso", "Contrato", "Motivo", "Termo", "Prévia"];
-const reasonMap: Record<string, string> = {
-  Mudança: "MUDANCA",
-  Financeiro: "FINANCEIRO",
-  Saúde: "SAUDE",
-  Horário: "HORARIO",
-  Atendimento: "ATENDIMENTO",
-  Outro: "OUTRO"
-};
-
-export default function ClientWizard() {
-  const [step, setStep] = useState(0);
-  const [accessId, setAccessId] = useState("");
-  const [contract, setContract] = useState<ContractView | null>(null);
-  const [customerName, setCustomerName] = useState("");
-  const [reason, setReason] = useState("Mudança");
-  const [reasonDetails, setReasonDetails] = useState("");
-  const [desiredDate, setDesiredDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [accepted, setAccepted] = useState(false);
-  const [preview, setPreview] = useState<Preview | null>(null);
-  const [history, setHistory] = useState<Array<{ protocol: string; status: string; createdAt: string }>>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [result, setResult] = useState<{ protocol: string; status: string; message: string } | null>(null);
-  const demo = process.env.NEXT_PUBLIC_DEMO_MODE === "true";
-
-  const money = useMemo(() => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }), []);
-
-  async function openAccess() {
-    setError("");
-    setLoading(true);
-    try {
-      const response = await fetch("/api/public/session", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ accessId })
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Acesso inválido");
-      const me = await fetch("/api/public/me", { cache: "no-store" });
-      const meData = await me.json();
-      if (!me.ok) throw new Error(meData.error || "Contrato não encontrado");
-      setCustomerName(meData.customer.displayName);
-      setContract(meData.contract);
-      const statusResponse = await fetch("/api/public/status", { cache: "no-store" });
-      if (statusResponse.ok) { const statusData = await statusResponse.json(); setHistory(statusData.items || []); }
-      setStep(1);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Não foi possível validar o acesso");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function loadPreview() {
-    setError("");
-    setLoading(true);
-    try {
-      const response = await fetch("/api/public/refund-preview", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ desiredDate })
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Não foi possível calcular a prévia");
-      setPreview(data);
-      setStep(4);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Erro na prévia");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function submitCancellation() {
-    setError("");
-    setLoading(true);
-    try {
-      const response = await fetch("/api/public/cancel", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          reasonCode: reasonMap[reason],
-          reasonDetails: reason === "Outro" ? reasonDetails : undefined,
-          desiredDate,
-          termVersion: "EV-CAN-2026.09-v1",
-          accepted: true
-        })
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Não foi possível enviar o pedido");
-      setResult({ protocol: data.protocol, status: data.status, message: data.message });
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Erro ao enviar o pedido");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    if (step < 4) setPreview(null);
-  }, [step, desiredDate]);
-
-  if (result) {
-    return (
-      <div className="wizard-card glass">
-        <div className="wizard-head">
-          <div><p className="eyebrow">PROTOCOLO GERADO</p><h1>Pedido registrado</h1></div>
-          <span className="system-chip">{result.status}</span>
-        </div>
-        <div className="wizard-body">
-          <div className="protocol-preview success-panel">
-            <span>Seu protocolo</span>
-            <b>#{result.protocol}</b>
-            <span>{result.message}</span>
-          </div>
-          <div className="info-box">Guarde este protocolo. O sistema não exibirá CPF e não pede dados de cartão. O estorno exibido é uma prévia; a execução financeira continua sob controles de aprovação.</div>
-        </div>
-        <div className="wizard-actions"><a className="btn primary" href="/">Concluir</a></div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="wizard-card glass">
-      <div className="wizard-head">
-        <div><p className="eyebrow">PORTAL DO CLIENTE</p><h1>Cancelar contrato</h1></div>
-        <span className="system-chip">Etapa {step + 1} de {steps.length}</span>
-      </div>
-      <div className="stepper">{steps.map((s, i) => <div className={i <= step ? "active" : ""} key={s}><i /> <span>{s}</span></div>)}</div>
-
-      <div className="wizard-body">
-        {error && <div className="error-box" role="alert">{error}</div>}
-        {step === 0 && <>
-          <label>ID de acesso<input autoComplete="off" value={accessId} onChange={e => setAccessId(e.target.value.toUpperCase())} placeholder="Ex.: EV-ABCD-EFGH-JKLM-NPQR" /></label>
-          <div className="info-box">Por privacidade, este portal não solicita CPF. Use o ID de acesso temporário fornecido pela equipe. Ele é pseudônimo, expira e é protegido contra tentativas repetidas.</div>
-          {demo && <div className="connector-note"><b>Modo demonstração</b><span>Use <strong>EV-DEMO-2026</strong> apenas em ambiente local de demonstração.</span></div>}
-        </>}
-        {step === 1 && contract && <>
-          <div className="contract-card selected"><span>CONTRATO {contract.status}</span><h3>{contract.planName}</h3><p>{contract.unit} • {contract.endDate ? `Vigência até ${new Date(contract.endDate).toLocaleDateString("pt-BR")}` : "Vigência em conferência"}</p><strong>{money.format(contract.amountPaid)} pagos</strong></div>
-          <div className="connector-note"><b>Olá, {customerName.split(" ")[0]}</b><span>Somente os dados mínimos do contrato são exibidos. A chave da API EVO permanece apenas no servidor.</span></div>
-          {history.length > 0 && <div className="history-box"><b>Última solicitação</b><span>#{history[0].protocol} • {history[0].status}</span><small>{new Date(history[0].createdAt).toLocaleString("pt-BR")}</small></div>}
-        </>}
-        {step === 2 && <>
-          <label>Qual o principal motivo?</label>
-          <div className="choice-grid">{Object.keys(reasonMap).map(r => <button type="button" onClick={() => setReason(r)} className={reason === r ? "selected" : ""} key={r}>{r}</button>)}</div>
-          {reason === "Outro" && <label>Detalhe opcional<textarea maxLength={1000} value={reasonDetails} onChange={e => setReasonDetails(e.target.value)} placeholder="Descreva apenas o necessário" /></label>}
-          <label>Data desejada<input type="date" value={desiredDate} onChange={e => setDesiredDate(e.target.value)} /></label>
-        </>}
-        {step === 3 && <>
-          <div className="term-box"><h3>Termo de solicitação de cancelamento</h3><p>Versão EV-CAN-2026.09-v1. O aceite fica ligado ao protocolo e à data/hora da solicitação.</p><p>Ao prosseguir, você confirma a intenção de cancelar o contrato selecionado e autoriza a análise das condições financeiras aplicáveis. A prévia de estorno não é promessa de pagamento até a validação final.</p></div>
-          <label className="check"><input type="checkbox" checked={accepted} onChange={e => setAccepted(e.target.checked)} /><span>Li e aceito o termo acima.</span></label>
-        </>}
-        {step === 4 && <>
-          {preview?.eligible && preview.calculation ? <div className="calc-panel"><p className="eyebrow">PRÉVIA EXPLICÁVEL</p><div><span>Saldo não utilizado</span><b>{money.format(preview.calculation.unusedBalance)}</b></div><div><span>Dedução prevista na regra</span><b>- {money.format(preview.calculation.deduction)}</b></div><hr/><div className="total"><span>Estorno estimado</span><b>{money.format(preview.calculation.estimatedRefund)}</b></div><small>Regra {preview.rule?.version}. Valor sujeito à validação financeira e ao contrato vigente.</small></div> : <div className="info-box">{preview?.reason || "A prévia automática não está disponível para este contrato. O cancelamento pode ser solicitado e seguirá para conferência."}</div>}
-          <div className="protocol-preview"><span>Ao confirmar, o sistema gera</span><b>Protocolo único + auditoria</b><span>Se a escrita EVO estiver homologada e habilitada, o cancelamento pode ser enviado automaticamente; caso contrário, cai em revisão manual.</span></div>
-        </>}
-      </div>
-
-      <div className="wizard-actions">
-        <button className="btn secondary" disabled={step === 0 || loading} onClick={() => setStep(Math.max(0, step - 1))}>Voltar</button>
-        {step === 0 && <button className="btn primary" disabled={loading || accessId.trim().length < 8} onClick={openAccess}>{loading ? "Validando..." : "Acessar contrato"}</button>}
-        {step === 1 && <button className="btn primary" disabled={loading || contract?.status !== "ACTIVE" || history.some(h => !["COMPLETED", "REJECTED", "EVO_CANCELLED", "CANCELLED_CONFIRMED", "CANCELLED_BY_CUSTOMER"].includes(h.status))} onClick={() => setStep(2)}>{contract?.status !== "ACTIVE" ? "Contrato não ativo" : history.some(h => !["COMPLETED", "REJECTED", "EVO_CANCELLED", "CANCELLED_CONFIRMED", "CANCELLED_BY_CUSTOMER"].includes(h.status)) ? "Solicitação já em andamento" : "Continuar"}</button>}
-        {step === 2 && <button className="btn primary" disabled={loading || !desiredDate} onClick={() => setStep(3)}>Continuar</button>}
-        {step === 3 && <button className="btn primary" disabled={loading || !accepted} onClick={loadPreview}>{loading ? "Calculando..." : "Ver prévia"}</button>}
-        {step === 4 && <button className="btn primary" disabled={loading || !accepted} onClick={submitCancellation}>{loading ? "Enviando..." : "Confirmar cancelamento"}</button>}
-      </div>
+export default function ClientWizard(){
+  const [step,setStep]=useState(0),[accessId,setAccessId]=useState(""),[customerName,setCustomerName]=useState("");
+  const [contract,setContract]=useState<ContractView|null>(null),[reason,setReason]=useState("Mudança"),[reasonDetails,setReasonDetails]=useState("");
+  const [desiredDate,setDesiredDate]=useState(()=>new Date().toISOString().slice(0,10)),[preview,setPreview]=useState<Preview|null>(null);
+  const [address,setAddress]=useState(""),[email,setEmail]=useState(""),[pixKey,setPixKey]=useState(""),[accepted,setAccepted]=useState(false);
+  const [protocol,setProtocol]=useState(""),[termUrl,setTermUrl]=useState(""),[signedFile,setSignedFile]=useState<File|null>(null),[alreadySigned,setAlreadySigned]=useState(false);
+  const [loading,setLoading]=useState(false),[error,setError]=useState(""),[result,setResult]=useState<{protocol:string;status:string;message:string}|null>(null);
+  const money=useMemo(()=>new Intl.NumberFormat("pt-BR",{style:"currency",currency:"BRL"}),[]);
+  const req=async(url:string,options?:RequestInit)=>{const r=await fetch(url,options);const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.error||"Não foi possível concluir a operação");return data};
+  async function openAccess(){setLoading(true);setError("");try{await req("/api/public/session",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({accessId})});const me=await req("/api/public/me",{cache:"no-store"});setCustomerName(me.customer.displayName);setContract(me.contract);const st=await req("/api/public/status",{cache:"no-store"});const latest=st.items?.[0];if(latest&&["AWAITING_SIGNATURE","SIGNED_RECEIVED"].includes(latest.status)){setProtocol(latest.protocol);setTermUrl(latest.termUrl);setAlreadySigned(latest.status==="SIGNED_RECEIVED");setStep(latest.status==="SIGNED_RECEIVED"?6:5)}else if(latest&&!["COMPLETED","REJECTED","EVO_CANCELLED","CANCELLED_CONFIRMED","CANCELLED_BY_CUSTOMER"].includes(latest.status)){setResult({protocol:latest.protocol,status:latest.status,message:"Já existe uma solicitação em andamento. A equipe dará continuidade pelo protocolo informado."})}else{setStep(1)}}catch(e){setError(e instanceof Error?e.message:"Falha no acesso")}finally{setLoading(false)}}
+  async function loadPreview(){setLoading(true);setError("");try{setPreview(await req("/api/public/refund-preview",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({desiredDate})}));setStep(3)}catch(e){setError(e instanceof Error?e.message:"Falha na prévia")}finally{setLoading(false)}}
+  async function generateTerm(){setLoading(true);setError("");try{const d=await req("/api/public/cancel",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reasonCode:reasonMap[reason],reasonDetails:reason==="Outro"?reasonDetails:undefined,desiredDate,termVersion:"EV-CAN-2026.09-v3",accepted:true,requesterAddress:address,contactEmail:email,pixKey:contract?.recurring?undefined:pixKey})});setProtocol(d.protocol);setTermUrl(d.termUrl);setStep(5)}catch(e){setError(e instanceof Error?e.message:"Falha ao gerar termo")}finally{setLoading(false)}}
+  async function uploadAndFinalize(){if(!signedFile||!protocol)return;setLoading(true);setError("");try{const fd=new FormData();fd.append("protocol",protocol);fd.append("file",signedFile);await req("/api/public/signed-term",{method:"POST",body:fd});const d=await req("/api/public/finalize",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({protocol})});setResult(d)}catch(e){setError(e instanceof Error?e.message:"Falha ao enviar termo")}finally{setLoading(false)}}
+  async function finalizeExisting(){if(!protocol)return;setLoading(true);setError("");try{const d=await req("/api/public/finalize",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({protocol})});setResult(d)}catch(e){setError(e instanceof Error?e.message:"Falha ao concluir")}finally{setLoading(false)}}
+  if(result)return <div className="wizard-card glass"><div className="wizard-head"><div><p className="eyebrow">PEDIDO CONCLUÍDO</p><h1>Cancelamento registrado</h1></div><span className="system-chip">{result.status}</span></div><div className="wizard-body"><div className="protocol-preview success-panel"><span>Protocolo</span><b>#{result.protocol}</b><span>{result.message}</span></div><div className="info-box">O termo assinado ficou vinculado ao protocolo. Guarde o número para acompanhamento.</div></div><div className="wizard-actions"><a className="btn primary" href="/">Concluir</a></div></div>;
+  return <div className="wizard-card glass">
+    <div className="wizard-head"><div><p className="eyebrow">PORTAL DO ALUNO</p><h1>Cancelamento de contrato</h1></div><span className="system-chip">Etapa {step+1} de {steps.length}</span></div>
+    <div className="stepper" style={{gridTemplateColumns:`repeat(${steps.length},1fr)`}}>{steps.map((s,i)=><div className={i<=step?"active":""} key={s}><i/><span>{s}</span></div>)}</div>
+    <div className="wizard-body">{error&&<div className="error-box">{error}</div>}
+      {step===0&&<><label>ID de acesso<input value={accessId} onChange={e=>setAccessId(e.target.value.toUpperCase())} placeholder="Código fornecido pela equipe" autoComplete="off"/></label><div className="info-box"><b>Importante:</b> a matrícula EVO (ex.: 29965) é usada pela equipe para localizar o aluno. Por segurança, o portal público usa um código temporário não previsível, evitando que uma pessoa tente abrir o contrato de outra.</div></>}
+      {step===1&&contract&&<><div className="contract-card selected"><span>CONTRATO {contract.status}</span><h3>{contract.planName}</h3><p>Unidade {contract.unit} • Início {new Date(contract.startDate).toLocaleDateString("pt-BR")}</p><strong>{money.format(contract.amountPaid)} registrados</strong></div><div className="connector-note"><b>Olá, {customerName.split(" ")[0]}</b><span>Confirme que este é o contrato correto antes de continuar.</span></div></>}
+      {step===2&&<><label>Motivo do cancelamento</label><div className="choice-grid">{Object.keys(reasonMap).map(r=><button type="button" className={reason===r?"selected":""} onClick={()=>setReason(r)} key={r}>{r}</button>)}</div>{reason==="Outro"&&<label>Descreva o motivo<textarea value={reasonDetails} maxLength={1000} onChange={e=>setReasonDetails(e.target.value)}/></label>}<label>Data desejada<input type="date" value={desiredDate} onChange={e=>setDesiredDate(e.target.value)}/></label></>}
+      {step===3&&<>{preview?.eligible&&preview.calculation?<div className="calc-panel"><p className="eyebrow">PRÉVIA DE ESTORNO</p><div><span>Saldo não utilizado</span><b>{money.format(preview.calculation.unusedBalance)}</b></div><div><span>Dedução estimada</span><b>- {money.format(preview.calculation.deduction)}</b></div><hr/><div className="total"><span>Estorno estimado</span><b>{money.format(preview.calculation.estimatedRefund)}</b></div><small>Prévia sujeita à conferência do contrato e financeiro.</small></div>:<div className="info-box">{preview?.reason||"Este contrato seguirá para conferência manual do estorno."}</div>}</>}
+      {step===4&&<><label>Endereço para constar no termo<input value={address} maxLength={240} onChange={e=>setAddress(e.target.value)} placeholder="Endereço completo"/></label><label>E-mail para contato<input type="email" value={email} maxLength={200} onChange={e=>setEmail(e.target.value)} placeholder="seuemail@exemplo.com"/></label>{contract&&!contract.recurring&&<label>Chave PIX para eventual estorno<input value={pixKey} maxLength={180} onChange={e=>setPixKey(e.target.value)} placeholder="Informe somente se aplicável"/></label>}<div className="info-box">O novo termo operacional usa a matrícula/ID validada pelo sistema e não solicita CPF/RG no portal. Dados adicionais só são coletados quando necessários ao próprio pedido.</div></>}
+      {step===5&&<><div className="term-box"><h3>Termo gerado pelo sistema</h3><p>O documento foi preenchido com o aluno, unidade, plano, datas, motivo e protocolo. Ele preserva as condições dos modelos atuais e evita redigitação manual.</p></div><label className="check"><input type="checkbox" checked={accepted} onChange={e=>setAccepted(e.target.checked)}/><span>Confirmo que revisei os dados e desejo gerar o termo para assinatura.</span></label>{protocol&&termUrl&&<div className="download-panel"><b>Protocolo #{protocol}</b><a className="btn primary" href={termUrl}>Baixar termo em PDF</a><span>Assine o PDF (digitalmente ou manualmente) e volte para enviar o arquivo assinado.</span></div>}</>}
+      {step===6&&<>{alreadySigned?<div className="upload-zone"><p className="eyebrow">TERMO JÁ RECEBIDO</p><h3>Documento assinado registrado</h3><p>O arquivo já está vinculado ao protocolo. Você pode concluir o pedido sem enviar novamente.</p></div>:<div className="upload-zone"><p className="eyebrow">UPLOAD DO TERMO ASSINADO</p><h3>Envie o documento assinado</h3><p>Formatos aceitos: PDF, JPG ou PNG. Limite: 8 MB.</p><input type="file" accept="application/pdf,image/jpeg,image/png" onChange={e=>setSignedFile(e.target.files?.[0]||null)}/>{signedFile&&<b>{signedFile.name}</b>}</div>}<div className="info-box">O arquivo é validado por assinatura de arquivo (magic bytes), tamanho e MIME, fica privado e nunca é executado no navegador.</div></>}
     </div>
-  );
+    <div className="wizard-actions"><button className="btn secondary" disabled={step===0||loading} onClick={()=>setStep(Math.max(0,step-1))}>Voltar</button>
+      {step===0&&<button className="btn primary" disabled={loading||accessId.trim().length<8} onClick={openAccess}>{loading?"Validando...":"Acessar"}</button>}
+      {step===1&&<button className="btn primary" disabled={contract?.status!=="ACTIVE"} onClick={()=>setStep(2)}>Continuar</button>}
+      {step===2&&<button className="btn primary" disabled={!desiredDate} onClick={loadPreview}>{loading?"Calculando...":"Calcular prévia"}</button>}
+      {step===3&&<button className="btn primary" onClick={()=>setStep(4)}>Continuar</button>}
+      {step===4&&<button className="btn primary" disabled={!address.trim()||!email.trim()} onClick={()=>setStep(5)}>Revisar termo</button>}
+      {step===5&&!protocol&&<button className="btn primary" disabled={!accepted||loading} onClick={generateTerm}>{loading?"Gerando...":"Gerar termo"}</button>}
+      {step===5&&protocol&&<button className="btn primary" onClick={()=>setStep(6)}>Já assinei</button>}
+      {step===6&&!alreadySigned&&signedFile&&<button className="btn primary" disabled={loading} onClick={uploadAndFinalize}>{loading?"Enviando...":"Enviar e concluir"}</button>}{step===6&&alreadySigned&&protocol&&<button className="btn primary" disabled={loading} onClick={finalizeExisting}>{loading?"Concluindo...":"Concluir pedido já assinado"}</button>}
+    </div>
+  </div>
 }

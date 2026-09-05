@@ -5,11 +5,19 @@ export async function GET() {
   const session = await getCustomerSession();
   if (!session) return Response.json({ error: "Unauthorized" }, { status: 401 });
   if (session.sub === "demo-contract") return Response.json({ items: [] });
-  const items = await prisma.cancellationRequest.findMany({
+  const rows = await prisma.cancellationRequest.findMany({
     where: { contractId: session.sub },
     orderBy: { createdAt: "desc" },
     take: 10,
-    select: { protocol: true, status: true, desiredDate: true, createdAt: true, updatedAt: true }
+    include: { attachments: { where: { type: "SIGNED_CANCELLATION_TERM" }, select: { id: true }, take: 1 } }
   });
-  return Response.json({ items });
+  return Response.json({ items: rows.map(r => ({
+    protocol: r.protocol,
+    status: r.status,
+    desiredDate: r.desiredDate,
+    createdAt: r.createdAt,
+    updatedAt: r.updatedAt,
+    hasSignedTerm: r.attachments.length > 0,
+    termUrl: `/api/public/term/${encodeURIComponent(r.protocol)}`
+  })) });
 }

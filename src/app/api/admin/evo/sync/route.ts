@@ -43,7 +43,7 @@ export async function POST(req: Request) {
           externalIdHash,
           externalIdCiphertext: encryptText(contract.externalId),
           customerId: savedCustomer.id,
-          unit: contract.unit,
+          unit: /condor/i.test(contract.unit) ? "Condor" : /umarizal/i.test(contract.unit) ? "Umarizal" : contract.unit,
           planName: contract.planName,
           planType: contract.planType,
           startDate: new Date(contract.startDate),
@@ -55,7 +55,7 @@ export async function POST(req: Request) {
         },
         update: {
           customerId: savedCustomer.id,
-          unit: contract.unit,
+          unit: /condor/i.test(contract.unit) ? "Condor" : /umarizal/i.test(contract.unit) ? "Umarizal" : contract.unit,
           planName: contract.planName,
           planType: contract.planType,
           startDate: new Date(contract.startDate),

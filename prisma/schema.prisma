@@ -10,6 +10,8 @@ datasource db {
 enum RequestStatus {
   DRAFT
   SENT
+  AWAITING_SIGNATURE
+  SIGNED_RECEIVED
   UNDER_REVIEW
   APPROVED
   MANUAL_REVIEW
@@ -111,6 +113,12 @@ model CancellationRequest {
   currentOwner       String?
   termVersion        String
   termAcceptedAt     DateTime
+  termGeneratedAt    DateTime?
+  signedTermReceivedAt DateTime?
+  submittedAt        DateTime?
+  requesterAddress   String?
+  contactEmail       String?
+  pixKey             String?
   evoOperationId     String?
   evoLastErrorCode   String?
   evoLastAttemptAt   DateTime?
@@ -132,6 +140,7 @@ model CalculationRule {
   version       String   @unique
   name          String
   percentage    Decimal? @db.Decimal(7, 4)
+  fixedFee      Decimal? @db.Decimal(12, 2)
   effectiveFrom DateTime
   effectiveTo   DateTime?
   criteria      Json
@@ -181,6 +190,9 @@ model Attachment {
   sizeBytes     Int
   sha256        String
   malwareStatus String   @default("QUARANTINED")
+  content       Bytes?
+  storageMode   String   @default("DATABASE")
+  uploadedBy    String?
   createdAt     DateTime @default(now())
   request       CancellationRequest @relation(fields: [requestId], references: [id])
 }

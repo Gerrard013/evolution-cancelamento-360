@@ -1,75 +1,60 @@
-# Evolution Cancelamento 360 — Secure v2
+# Evolution Cancelamento 360 — Final v3
 
-Plataforma G Tech para solicitação de cancelamento, prévia de estorno, fila administrativa, auditoria e integração controlada com EVO/W12.
+Sistema web para solicitação, geração do termo, assinatura externa, upload do termo assinado, prévia de estorno, fila administrativa e integração segura com EVO/W12.
 
-## O que mudou nesta versão
-- Portal público sem CPF: acesso por ID temporário de alta entropia.
-- ID do EVO pseudonimizado no banco: hash para busca + criptografia para uso estritamente server-side.
-- Chave da API EVO somente em variável secreta do Railway, nunca em `NEXT_PUBLIC_*` e nunca no frontend.
-- Login administrativo separado, sessão curta, cookie `HttpOnly`, `Secure` em produção e `SameSite=Strict`.
-- TOTP opcional para o administrador.
-- Rate limit, validação de origem, limite de payload e validação Zod.
-- CSP com nonce, HSTS, anti-clickjacking, `nosniff`, `Referrer-Policy` e `Permissions-Policy`.
-- Adaptador EVO com bloqueio de SSRF, HTTPS obrigatório, timeout, sem redirects e limite de resposta.
-- Cache de leitura EVO e contador mensal de hits para reduzir consumo da API.
-- Webhook com HMAC ou bearer, janela anti-replay e idempotência.
-- Cancelamento direto pelo EVO somente quando **três condições** estiverem habilitadas: modo `write`, `EVO_WRITE_ENABLED=true` e `CUSTOMER_DIRECT_CANCELLATION=true`.
-- Sem endpoint de cancelamento EVO hardcoded: a escrita só é liberada depois de confirmar os endpoints reais na documentação/homologação.
-- Upload público desativado. Isso reduz a superfície de malware. O modelo de anexo mantém quarentena para futura implementação controlada.
-- GitHub Actions, Dependabot e verificação local para reduzir risco de segredo e dependência vulnerável.
+## Fluxo real de uso
 
-## Importante sobre LGPD
-Trocar CPF por ID é uma excelente medida de minimização, mas **não elimina a aplicação da LGPD**. Um ID que possa ser relacionado a uma pessoa continua sendo dado pessoal. Por isso esta versão usa um ID público opaco e temporário, além de pseudonimizar os identificadores internos do EVO.
+1. A equipe entra em `/equipe` e pesquisa a matrícula/ID EVO (ex.: `29965`).
+2. O backend consulta o EVO, salva somente os dados necessários e identifica a unidade **Condor** ou **Umarizal**.
+3. A equipe seleciona o contrato e gera um **ID temporário de acesso**. A matrícula previsível não é usada sozinha no portal público para evitar IDOR/enumeration.
+4. O aluno entra em `/cliente`, confirma o contrato, informa motivo/data, vê a prévia financeira quando segura e completa os dados mínimos do termo.
+5. O sistema gera o termo em PDF já preenchido e um protocolo único.
+6. O aluno baixa, assina e envia o termo assinado (PDF/JPG/PNG, até 8 MB).
+7. O arquivo fica privado no PostgreSQL, com hash SHA-256, validação de magic bytes/MIME/tamanho e bloqueio de conteúdo ativo conhecido em PDF.
+8. Depois do upload, o pedido vai para análise ou, quando a escrita EVO estiver homologada e habilitada, o backend envia o cancelamento ao EVO com idempotência.
+9. A equipe vê o pedido no painel, baixa o termo assinado e acompanha estorno/status/auditoria.
 
-## Fluxo do cliente
-1. Cliente recebe um ID temporário por canal confiável.
-2. Acessa `/cliente` e informa somente esse ID.
-3. Visualiza os dados mínimos do contrato.
-4. Informa motivo e data desejada.
-5. Aceita o termo versionado.
-6. Visualiza a prévia de estorno, quando houver regra financeira homologada.
-7. Confirma o pedido.
-8. O sistema gera protocolo, auditoria e tenta escrita no EVO somente se a função estiver homologada e habilitada.
-9. Se a integração falhar, a solicitação cai em `MANUAL_REVIEW` sem perder o protocolo.
+## Por que o aluno não entra apenas com o ID 29965?
 
-## Fluxo administrativo
-1. Acessar `/equipe/login`.
-2. Autenticar com e-mail, senha forte e, em produção, TOTP.
-3. Sincronizar aluno por ID/matrícula EVO.
-4. Gerar um ID temporário de acesso para o contrato correto.
-5. Acompanhar fila, SLA, status e prévias.
-6. Aprovar, rejeitar ou confirmar cancelamento manual pelos endpoints administrativos.
-7. Registrar estorno somente depois do cancelamento estar confirmado.
+IDs numéricos internos normalmente são previsíveis. Usar apenas `29965` como credencial pública permitiria tentativas como `29964`, `29966` etc. O sistema usa o ID EVO **para a equipe localizar o cadastro**, e emite um código temporário aleatório para o aluno. Isso reduz risco de IDOR sem exigir CPF.
+
+Trocar CPF por ID não elimina a LGPD: matrícula/ID vinculável ao aluno continua sendo dado pessoal. O projeto aplica minimização, pseudonimização, criptografia e controle de acesso.
+
+## Termos fornecidos
+
+Os PDFs originais estão preservados em `docs/templates-original/` apenas como referência operacional. A versão digital gerada pelo sistema mantém as condições informadas nos modelos, mas substitui CPF/RG por identificação interna validada pelo sistema. Essa adaptação deve ser aprovada formalmente pela Evolution antes de uso jurídico definitivo.
+
+- Recorrente: referência de multa de R$ 258,00 e antecedência de 30 dias.
+- Anual: referência de 14,4% + 10% e prazo informado de até 60 dias úteis para eventual pagamento.
+
+A prévia financeira é deliberadamente tratada como **estimativa**, nunca como autorização automática de estorno.
 
 ## Rodar localmente
+
 ```bash
-cp .env.example .env
 npm install
-npm run admin:hash -- "SUA-SENHA-FORTE-COM-14+-CARACTERES"
-# copie o hash para ADMIN_PASSWORD_HASH no .env
+cp .env.example .env
 npm run prisma:generate
 npm run prisma:push
 npm run dev
 ```
 
-Modo demonstração local: use `EV-DEMO-2026` no portal do cliente. Essa credencial de demonstração é bloqueada automaticamente em `NODE_ENV=production`.
+Acesse:
+
+- Portal público: `http://localhost:3000/cliente`
+- Equipe: `http://localhost:3000/equipe/login`
+- Healthcheck: `http://localhost:3000/api/health`
 
 ## Antes de produção
-- `NEXT_PUBLIC_DEMO_MODE=false`.
-- `APP_ORIGIN` com o domínio HTTPS oficial.
-- `SESSION_SECRET`, `PUBLIC_ID_PEPPER`, `EXTERNAL_ID_PEPPER` e `IP_HASH_PEPPER` distintos e aleatórios.
-- `APP_DATA_ENCRYPTION_KEY` com exatamente 32 bytes em Base64.
-- `ADMIN_TOTP_SECRET` configurado.
-- Banco PostgreSQL do Railway.
-- Regra de cálculo aprovada e ativada.
-- Mapeamento dos endpoints EVO testado em homologação.
-- Webhook com assinatura/bearer conforme o mecanismo real suportado pelo EVO.
-- WAF/rate limit de borda na frente do Railway.
-- Backup, observabilidade, alerta e plano de resposta a incidente.
 
-Leia também:
-- `docs/SECURITY.md`
-- `docs/LGPD.md`
-- `docs/EVO_INTEGRATION.md`
-- `docs/DEPLOY_RAILWAY.md`
-- `docs/PENTEST_CHECKLIST.md`
+1. Criar PostgreSQL no Railway e preencher `DATABASE_URL`.
+2. Gerar todos os segredos fortes no Railway; nunca commitar `.env`.
+3. Configurar `ADMIN_EMAIL`, `ADMIN_PASSWORD_HASH` e TOTP.
+4. Configurar a API EVO primeiro em modo `read`.
+5. Confirmar os endpoints reais na documentação/homologação EVO.
+6. Testar o ID de um aluno de Condor e de Umarizal.
+7. Validar os cálculos com o financeiro.
+8. Validar o texto digital do termo com a gestão/jurídico.
+9. Só então habilitar `EVO_WRITE_ENABLED=true` e, por último, `CUSTOMER_DIRECT_CANCELLATION=true`.
+
+Leia `docs/FINAL_RUNBOOK.md` e `docs/EVO_CONNECTION_CHECKLIST.md` antes da homologação.

@@ -14,7 +14,8 @@ export default async function EquipePage() {
     include: {
       customer: { select: { displayName: true } },
       contract: { select: { planName: true } },
-      calculations: { orderBy: { createdAt: "desc" }, take: 1 }
+      calculations: { orderBy: { createdAt: "desc" }, take: 1 },
+      attachments: { where: { type: "SIGNED_CANCELLATION_TERM" }, orderBy: { createdAt: "desc" }, take: 1 }
     }
   }).catch(() => []);
 
@@ -52,7 +53,7 @@ export default async function EquipePage() {
               {rows.length === 0 ? <div className="empty-state">Nenhuma solicitação registrada ainda.</div> : rows.map((r, idx) => {
                 const amount = r.calculations[0]?.estimatedRefund ? Number(r.calculations[0].estimatedRefund) : null;
                 const priority = r.slaDueAt && r.slaDueAt <= new Date(Date.now() + 24 * 60 * 60 * 1000) ? "critical" : "normal";
-                return <div className={`tr ${idx === 0 ? "selected" : ""}`} key={r.protocol}><span><b>#{r.protocol}</b><small>{r.unit} • {r.contract.planName}</small></span><span>{r.customer.displayName}</span><span><i className={`badge ${priority}`}>{r.status}</i></span><span>{r.slaDueAt ? r.slaDueAt.toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—"}</span><span>{amount === null ? "—" : money(amount)}</span></div>;
+                return <div className={`tr ${idx === 0 ? "selected" : ""}`} key={r.protocol}><span><b>#{r.protocol}</b><small>{r.unit} • {r.contract.planName}</small></span><span>{r.customer.displayName}</span><span><i className={`badge ${priority}`}>{r.status}</i></span><span>{r.slaDueAt ? r.slaDueAt.toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—"}</span><span>{amount === null ? "—" : money(amount)}{r.attachments[0] ? <a className="doc-link" href={`/api/admin/documents/${r.attachments[0].id}`}>Termo assinado</a> : null}</span></div>;
               })}
             </div>
           </section>
@@ -60,8 +61,8 @@ export default async function EquipePage() {
           <aside className="case-detail glass-dark">
             <div className="detail-top"><div><p className="eyebrow">CONTROLES ATIVOS</p><h2>Hardening</h2></div><span className="badge">v2</span></div>
             <div className="person-card"><b>API EVO somente no backend</b><span>Token em variável secreta do Railway</span><small>Nenhuma chave usa prefixo NEXT_PUBLIC_</small></div>
-            <div className="timeline-mini"><div className="done"><i/>ID público pseudônimo<span>LGPD</span></div><div className="done"><i/>Rate limit + origem confiável<span>API</span></div><div className="done"><i/>CSP + HSTS + anti-clickjacking<span>WEB</span></div><div className="active"><i/>Escrita EVO somente por feature flag<span>SAFE</span></div></div>
-            <div className="calc-mini"><div><span>Upload público</span><b>Desativado</b></div><div><span>Estorno automático</span><b>Bloqueado</b></div><hr/><div><span>Cancelamento direto</span><strong>Homologável</strong></div><small>Somente ativa quando endpoint e regra do EVO estiverem confirmados.</small></div>
+            <div className="timeline-mini"><div className="done"><i/>ID público pseudônimo<span>LGPD</span></div><div className="done"><i/>Rate limit + origem confiável<span>API</span></div><div className="done"><i/>PDF/JPG/PNG privado + hash SHA-256<span>DOC</span></div><div className="done"><i/>CSP + HSTS + anti-clickjacking<span>WEB</span></div><div className="active"><i/>Escrita EVO somente por feature flag<span>SAFE</span></div></div>
+            <div className="calc-mini"><div><span>Upload do termo</span><b>Protegido</b></div><div><span>Estorno automático</span><b>Bloqueado</b></div><hr/><div><span>Cancelamento direto</span><strong>Homologável</strong></div><small>Somente ativa quando endpoint e regra do EVO estiverem confirmados.</small></div>
           </aside>
         </div>
       </section>
