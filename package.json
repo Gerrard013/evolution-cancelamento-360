@@ -17,7 +17,7 @@
     "production:check": "node scripts/production-check.mjs"
   },
   "dependencies": {
-    "@prisma/client": "^6.14.0",
+    "@prisma/client": "^7.10.0",
     "next": "^15.4.6",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
