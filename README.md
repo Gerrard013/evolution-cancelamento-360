@@ -1,67 +1,105 @@
-# Evolution Cancelamento 360 — Final Operacional v4
+# Evolution Cancelamento 360 — Operacional v5
 
-Versão focada em uso real, com telas simplificadas para equipe e aluno. O sistema permite localizar o aluno pela matrícula EVO, identificar Condor/Umarizal, gerar o termo, apresentar prévia de estorno quando aplicável, receber o termo assinado e acompanhar o pedido.
+Versão preparada para demonstração e operação assistida na recepção, sem SMTP e sem link/código visível para o aluno.
 
-## Fluxo de uso
+## Fluxo principal
 
-### Equipe
-1. Acesse `/equipe`.
-2. Digite a matrícula EVO, por exemplo `29965`.
-3. Se a API EVO já estiver conectada, o sistema traz nome, unidade, plano e contrato automaticamente.
-4. Se a API ainda não estiver conectada, use o cadastro rápido com os mesmos dados vistos no EVO/W12. Isso permite começar a operar antes da integração.
-5. Escolha o contrato e clique em **Iniciar cancelamento**.
-6. O sistema cria um **link seguro** válido por 24 horas. A equipe só precisa copiar o link ou abrir o portal do aluno. O código aleatório não é exibido como campo para digitação.
+### Equipe (Gerrard / Ruy)
+1. Entrar em `/equipe` com usuário e senha.
+2. Digitar a matrícula EVO do aluno, por exemplo `29965`.
+3. Com API EVO em `read`, o sistema traz aluno, unidade, plano e contrato automaticamente.
+4. Enquanto a API não estiver ligada, o cadastro rápido permite informar esses dados manualmente.
+5. Conferir o contrato e clicar **Atender aluno agora**.
+6. O sistema cria uma sessão interna segura e abre o formulário do aluno no mesmo aparelho. Nenhum link ou código precisa ser copiado.
 
 ### Aluno
-1. Abre o link seguro recebido da equipe.
-2. Confere nome, unidade e plano.
-3. Informa motivo e data desejada.
-4. Visualiza a prévia de estorno quando houver dados suficientes para cálculo seguro.
-5. Preenche os dados mínimos do termo.
-6. Gera e baixa o PDF do termo.
-7. Assina e envia o PDF/JPG/PNG assinado pelo próprio portal.
-8. Recebe o protocolo e acompanha a conclusão do pedido.
+1. Confere nome, Condor/Umarizal, plano e contrato.
+2. Informa motivo e data desejada.
+3. Se for plano anual e houver dados suficientes, vê a prévia de estorno.
+4. O cálculo de referência mostra separadamente 14,4% (antecipação das parcelas) + 10% (multa/taxa do sistema), aplicados sobre o saldo proporcional não utilizado, como **estimativa sujeita à conferência financeira**.
+5. Preenche endereço e, quando aplicável, chave PIX.
+6. Gera e baixa o termo PDF.
+7. Assina e envia PDF/JPG/PNG no próprio sistema.
+8. Recebe protocolo e o pedido entra na fila administrativa.
 
-## Segurança do acesso
+## Plano recorrente
 
-A matrícula EVO é usada pela equipe para localizar o cadastro, mas não funciona como senha pública. Matrículas como `29965` são previsíveis e não devem ser usadas sozinhas para abrir dados de contrato. A v4 usa um link temporário de alta entropia, colocado no fragmento da URL (`#acesso=`), que não é enviado ao servidor em logs de navegação. Ao abrir o portal, o token é trocado por uma sessão HttpOnly e removido da barra de endereço.
+O modelo fornecido informa multa de referência de R$ 258,00 e antecedência de 30 dias da próxima mensalidade. Como o documento não fornece fórmula automática segura de estorno para o recorrente, o sistema sinaliza conferência financeira em vez de inventar cálculo.
 
-O portal não solicita CPF/RG. A matrícula EVO continua sendo dado pessoal quando vinculável ao aluno, portanto o sistema mantém minimização, criptografia, HMAC, controle de acesso e trilha de auditoria.
+## Sem SMTP
 
-## Operação antes da API EVO
+O sistema não depende de SMTP. O termo é gerado, baixado e depois enviado pelo próprio portal. O documento fica vinculado ao protocolo no PostgreSQL. Caso a Evolution aprove o fluxo digital como procedimento oficial, ele substitui a troca manual de e-mails para esse processo.
 
-A v4 pode ser usada em `EVO_INTEGRATION_MODE="manual"`. A equipe informa manualmente os dados necessários do contrato e o fluxo completo de termo/upload funciona. Quando a API for configurada, a busca por matrícula passa a preencher esses dados automaticamente.
+## Dois acessos de equipe
 
-## Termos
-
-Os modelos originais permanecem em `docs/templates-original/`. O termo digital é gerado pelo sistema com matrícula, nome, unidade, plano, datas, motivo e protocolo, sem exigir CPF/RG no portal.
-
-- Recorrente: referência operacional de multa de R$ 258,00 e antecedência de 30 dias.
-- Anual: referência operacional de 14,4% + 10% e prazo informado de até 60 dias úteis para eventual pagamento.
-
-A prévia financeira é uma estimativa sujeita à conferência administrativa/financeira.
-
-## Railway
-
-Variáveis mínimas para começar em modo manual:
+Configure no Railway:
 
 ```env
-DATABASE_URL="..."
-APP_ORIGIN="https://SEU-DOMINIO.up.railway.app"
+ADMIN_1_NAME="Gerrard"
+ADMIN_1_USERNAME="gerrard"
+ADMIN_1_PASSWORD_HASH="..."
+ADMIN_2_NAME="Ruy"
+ADMIN_2_USERNAME="ruy"
+ADMIN_2_PASSWORD_HASH="..."
+```
+
+Gere cada hash localmente:
+
+```bash
+npm run admin:hash -- "SENHA-FORTE-COM-14-OU-MAIS-CARACTERES"
+```
+
+Não coloque senhas em texto puro no GitHub.
+
+## Railway — variáveis mínimas para demonstrar hoje
+
+```env
+DATABASE_URL="${{Postgres.DATABASE_URL}}"
+APP_ORIGIN="https://evolution-cancelamento-360-production.up.railway.app"
 NEXT_PUBLIC_DEMO_MODE="false"
 SESSION_SECRET="..."
 PUBLIC_ID_PEPPER="..."
 EXTERNAL_ID_PEPPER="..."
 APP_DATA_ENCRYPTION_KEY="..."
 IP_HASH_PEPPER="..."
-ADMIN_EMAIL="..."
-ADMIN_PASSWORD_HASH="..."
+ADMIN_1_NAME="Gerrard"
+ADMIN_1_USERNAME="gerrard"
+ADMIN_1_PASSWORD_HASH="..."
+ADMIN_2_NAME="Ruy"
+ADMIN_2_USERNAME="ruy"
+ADMIN_2_PASSWORD_HASH="..."
 EVO_INTEGRATION_MODE="manual"
 EVO_WRITE_ENABLED="false"
 CUSTOMER_DIRECT_CANCELLATION="false"
 ```
 
-Depois conecte a API EVO primeiro em modo `read`. Escrita e cancelamento direto devem ser habilitados somente após homologação dos endpoints reais.
+O container executa `prisma db push` ao iniciar para manter as tabelas necessárias no PostgreSQL do Railway.
+
+## Integração EVO
+
+Para a demonstração, use `manual`. Para integrar dados reais:
+
+1. Configurar token/credencial EVO **somente no Railway**.
+2. Mudar para `EVO_INTEGRATION_MODE="read"`.
+3. Testar matrícula real, unidade Condor/Umarizal, plano, contrato e valores.
+4. Somente após homologar leitura e endpoint oficial de cancelamento, usar `write`.
+5. Manter `CUSTOMER_DIRECT_CANCELLATION="false"` no início: a equipe aprova o cancelamento antes de escrever no EVO.
+
+Variáveis esperadas:
+
+```env
+EVO_API_BASE_URL="..."
+EVO_API_TOKEN="..."
+EVO_API_USERNAME="..."
+EVO_AUTH_MODE="bearer"
+EVO_MEMBER_BY_ID_PATH="..."
+EVO_CONTRACTS_BY_MEMBER_PATH="..."
+EVO_CONTRACT_BY_ID_PATH="..."
+EVO_CANCEL_CONTRACT_PATH="..."
+EVO_CANCEL_METHOD="DELETE"
+```
+
+Nunca use `NEXT_PUBLIC_` em segredos EVO.
 
 ## Verificações
 
@@ -71,5 +109,3 @@ npm run production:check
 npm run typecheck
 npm run build
 ```
-
-O `security:check` desta entrega foi executado com sucesso. O ambiente de geração não conseguiu concluir `npm install` por indisponibilidade de rede, então `build` e `typecheck` completos devem ser executados no Mac/Railway com as dependências instaladas.

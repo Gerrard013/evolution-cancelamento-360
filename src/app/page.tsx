@@ -12,16 +12,16 @@ export default function Home() {
       <section className="simple-hero">
         <div className="simple-copy">
           <p className="eyebrow">CANCELAMENTO DE CONTRATO</p>
-          <h1>Seu pedido, do início ao comprovante.</h1>
-          <p className="lead">Preencha o pedido, veja a prévia de estorno quando aplicável, gere o termo, assine e envie o documento pelo próprio sistema.</p>
+          <h1>Cancelamento do início ao comprovante.</h1>
+          <p className="lead">A equipe localiza o aluno pela matrícula EVO, confere o contrato e inicia o atendimento. O aluno vê a prévia, gera o termo, assina e envia o documento no próprio sistema.</p>
           <div className="hero-actions">
-            <a className="btn primary" href="/cliente">Acessar meu pedido</a>
-            <a className="btn secondary" href="/equipe">Sou da equipe</a>
+            <a className="btn primary" href="/equipe">Iniciar atendimento</a>
           </div>
           <div className="plain-features">
-            <div><b>Sem CPF no portal</b><span>O atendimento usa a matrícula EVO para localizar o cadastro.</span></div>
-            <div><b>Condor e Umarizal</b><span>A unidade e o plano aparecem de forma clara antes do envio.</span></div>
-            <div><b>Termo e protocolo</b><span>O sistema gera o documento e acompanha o pedido até a conclusão.</span></div>
+            <div><b>Sem CPF no portal</b><span>A matrícula EVO é usada pela equipe para localizar o cadastro.</span></div>
+            <div><b>Condor e Umarizal</b><span>Unidade, plano e contrato são conferidos antes do cancelamento.</span></div>
+            <div><b>Sem link confuso</b><span>A equipe inicia o atendimento e entrega a tela diretamente ao aluno.</span></div>
+            <div><b>Termo + protocolo</b><span>O sistema gera o PDF, recebe o termo assinado e registra o protocolo.</span></div>
           </div>
         </div>
         <div className="simple-visual glass">

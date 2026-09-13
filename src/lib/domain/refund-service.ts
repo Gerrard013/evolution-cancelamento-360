@@ -58,10 +58,25 @@ export async function previewForContract(contractId: string, desiredDate: Date) 
   const effectiveCancelDate = desiredDate < contract.startDate ? contract.startDate : desiredDate;
   const unusedDays = Math.min(contractedDays, daysBetween(effectiveCancelDate, contract.endDate));
   const calculation = calculateRefund({ amountPaid: Number(contract.amountPaid), contractedDays, unusedDays, deductionRate: Number(rule.percentage), priorRefunds: 0 });
+  const sourceBreakdown = rule.version === "SOURCE-ANUAL-2026-v1"
+    ? {
+        advanceDeduction: Math.round(calculation.unusedBalance * 0.144 * 100) / 100,
+        contractFee: Math.round(calculation.unusedBalance * 0.10 * 100) / 100
+      }
+    : null;
 
   return {
     eligible: true as const,
     rule: { id: rule.id, version: rule.version, name: rule.name, percentage: Number(rule.percentage) },
-    calculation: { ...calculation, memory: { ...calculation.memory, legalReference: rule.version === "SOURCE-ANUAL-2026-v1" ? "14,4% + 10% do modelo anual fornecido" : "regra administrativa ativa", requiresFinancialValidation: true } }
+    calculation: {
+      ...calculation,
+      ...(sourceBreakdown || {}),
+      memory: {
+        ...calculation.memory,
+        legalReference: rule.version === "SOURCE-ANUAL-2026-v1" ? "14,4% + 10% do modelo anual fornecido" : "regra administrativa ativa",
+        breakdown: sourceBreakdown ? [{ label: "antecipacao_parcelas", rate: 0.144 }, { label: "multa_taxa_sistema", rate: 0.10 }] : undefined,
+        requiresFinancialValidation: true
+      }
+    }
   };
 }

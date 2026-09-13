@@ -1,5 +1,6 @@
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import type { CancellationRequest, Contract, Customer } from "@prisma/client";
+import { decryptText } from "@/lib/security/crypto";
 
 type TermData = {
   request: CancellationRequest;
@@ -39,13 +40,14 @@ export async function buildCancellationTerm({ request, contract, customer }: Ter
   draw(`Protocolo: ${request.protocol}`, 9, bold, muted); y -= 8;
 
   lineField("ALUNO", customer.displayName);
-  lineField("MATRÍCULA / ID EVO", "Identificador validado pelo sistema e não exibido neste documento público");
+  let memberId = "Identificador validado pelo sistema";
+  try { if (customer.externalIdCiphertext) memberId = decryptText(customer.externalIdCiphertext); } catch {}
+  lineField("MATRÍCULA / ID EVO", memberId);
   lineField("UNIDADE", contract.unit);
   lineField("PLANO", contract.planName);
   lineField("INÍCIO DO CONTRATO", contract.startDate.toLocaleDateString("pt-BR"));
   lineField("DATA DA SOLICITAÇÃO", request.createdAt.toLocaleDateString("pt-BR"));
   lineField("ENDEREÇO INFORMADO", request.requesterAddress || "Não informado");
-  lineField("E-MAIL DE CONTATO", request.contactEmail || "Não informado");
   if (!contract.recurring) lineField("CHAVE PIX PARA EVENTUAL ESTORNO", request.pixKey || "Não informado");
 
   draw("DECLARAÇÃO", 10, bold, green); y -= 2;
@@ -59,12 +61,12 @@ export async function buildCancellationTerm({ request, contract, customer }: Ter
   } else {
     paragraph("Plano anual: o modelo operacional fornecido pela academia prevê multa equivalente a 14,4% sobre a antecipação das parcelas e 10% referente à multa do contrato/taxa do sistema, com prazo informado de até 60 dias úteis para pagamento de eventual estorno. A aplicação efetiva depende da conferência do contrato do aluno.");
   }
-  paragraph("Este documento foi gerado pelo Evolution Cancelamento 360. O sistema substitui o envio manual por e-mail apenas quando o fluxo digital estiver formalmente aprovado pela Evolution Academia e configurado para produção.");
+  paragraph("Este documento foi gerado pelo Evolution Cancelamento 360 e fica vinculado ao protocolo digital. O fluxo dispensa SMTP: o termo assinado é enviado e armazenado pelo próprio sistema. A adoção deste canal como procedimento oficial deve ser aprovada pela Evolution Academia.");
 
   y -= 10;
   draw("ASSINATURA DO ALUNO", 9, bold, muted);
   page.drawLine({ start: { x: 52, y: y-24 }, end: { x: 350, y: y-24 }, thickness: 0.8, color: muted });
-  page.drawText("Assinar e enviar o arquivo pelo portal do aluno", { x: 52, y: y-39, size: 8.5, font: regular, color: muted });
+  page.drawText("Assinar e enviar o arquivo no próprio atendimento do Evolution 360", { x: 52, y: y-39, size: 8.5, font: regular, color: muted });
   page.drawText(`Belém, ${request.createdAt.toLocaleDateString("pt-BR")}`, { x: 390, y: y-24, size: 9, font: regular, color: black });
 
   page.drawText("Documento gerado automaticamente • Não contém CPF ou RG • Protocolo auditável", { x: 52, y: 28, size: 7.5, font: regular, color: muted });
