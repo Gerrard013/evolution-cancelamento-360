@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db/prisma";
 import { requireAdminPage } from "@/lib/auth/require-admin";
 import { friendlyStatus } from "@/lib/ui/status";
 import AdminTools from "./AdminTools";
+import RequestActions from "./RequestActions";
 
 function money(value: number) {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
@@ -16,7 +17,7 @@ export default async function EquipePage() {
       customer: { select: { displayName: true } },
       contract: { select: { planName: true } },
       calculations: { orderBy: { createdAt: "desc" }, take: 1 },
-      attachments: { where: { type: "SIGNED_CANCELLATION_TERM" }, orderBy: { createdAt: "desc" }, take: 1 }
+      attachments: { where: { type: { in: ["SIGNED_CANCELLATION_TERM", "CANCELLATION_FEE_RECEIPT"] } }, orderBy: { createdAt: "desc" } }
     }
   }).catch(() => []);
 
@@ -28,13 +29,13 @@ export default async function EquipePage() {
     <main className="ops-shell simple-ops">
       <aside className="sidebar glass-dark simple-sidebar">
         <a href="/" className="ops-brand"><span className="brand-dot"/><b>EVOLUTION 360</b></a>
-        <div className="side-summary"><span>Central de cancelamentos</span><b>Condor • Umarizal</b><small>Atendimento, termos, análise e estorno.</small></div>
+        <div className="side-summary"><span>Central de cancelamentos</span><b>Condor • Umarizal</b><small>Protocolos, termos, taxas, cancelamentos e estornos.</small></div>
         <nav><a className="active">Painel da equipe</a></nav>
         <div className="sidebar-foot"><small>ACESSO DA EQUIPE</small><b>Administrador</b><span>{admin.sub}</span></div>
       </aside>
 
       <section className="ops-main">
-        <header className="ops-header"><div><p className="eyebrow">CENTRAL DA EQUIPE</p><h1>Cancelamentos</h1><p className="header-help">Comece pesquisando o aluno pela matrícula EVO. O restante do fluxo é guiado.</p></div><div className="ops-user"><span>EV</span></div></header>
+        <header className="ops-header"><div><p className="eyebrow">CENTRAL DA EQUIPE</p><h1>Cancelamentos</h1><p className="header-help">Acompanhe os pedidos enviados pelo portal e conclua somente as etapas que exigem ação da equipe.</p></div><div className="ops-user"><span>EV</span></div></header>
 
         <div className="metric-grid compact-metrics">
           <article><small>EM ANDAMENTO</small><b>{open}</b><span>solicitações abertas</span></article>
@@ -45,12 +46,14 @@ export default async function EquipePage() {
         <AdminTools />
 
         <section className="queue glass full-queue">
-          <div className="section-title"><div><p className="eyebrow">SOLICITAÇÕES RECENTES</p><h2>Acompanhar pedidos</h2><p className="section-help">Status em linguagem operacional, sem códigos internos.</p></div></div>
+          <div className="section-title"><div><p className="eyebrow">SOLICITAÇÕES RECENTES</p><h2>Acompanhar pedidos</h2><p className="section-help">Pedidos recebidos pelo portal e atendimentos assistidos pela equipe.</p></div></div>
           <div className="queue-table friendly-table">
-            <div className="tr th"><span>Protocolo</span><span>Aluno</span><span>Unidade / Plano</span><span>Status</span><span>Estorno</span></div>
+            <div className="tr th"><span>Protocolo</span><span>Aluno</span><span>Unidade / Plano</span><span>Status</span><span>Valores</span><span>Ações</span></div>
             {rows.length === 0 ? <div className="empty-state">Nenhuma solicitação registrada ainda.</div> : rows.map((r) => {
               const amount = r.calculations[0]?.estimatedRefund ? Number(r.calculations[0].estimatedRefund) : null;
-              return <div className="tr" key={r.protocol}><span><b>#{r.protocol}</b><small>{r.createdAt.toLocaleDateString("pt-BR")}</small></span><span>{r.customer.displayName}</span><span><b>{r.unit}</b><small>{r.contract.planName}</small></span><span><i className="badge">{friendlyStatus(r.status)}</i></span><span>{amount === null ? "—" : money(amount)}{r.attachments[0] ? <a className="doc-link" href={`/api/admin/documents/${r.attachments[0].id}`}>Baixar termo assinado</a> : null}</span></div>;
+              const signed = r.attachments.find(a => a.type === "SIGNED_CANCELLATION_TERM");
+              const feeReceipt = r.attachments.find(a => a.type === "CANCELLATION_FEE_RECEIPT");
+              return <div className="tr" key={r.protocol}><span><b>#{r.protocol}</b><small>{r.createdAt.toLocaleDateString("pt-BR")}</small></span><span>{r.customer.displayName}</span><span><b>{r.unit}</b><small>{r.contract.planName}</small></span><span><i className="badge">{friendlyStatus(r.status)}</i></span><span>{Number(r.cancellationFee)>0 ? <small>Taxa: {money(Number(r.cancellationFee))}</small> : null}{amount === null ? null : <b>Estorno: {money(amount)}</b>}{signed ? <a className="doc-link" href={`/api/admin/documents/${signed.id}`}>Termo assinado</a> : null}{feeReceipt ? <a className="doc-link" href={`/api/admin/documents/${feeReceipt.id}`}>Comprovante da taxa</a> : null}</span><span><RequestActions id={r.id} status={r.status} fee={Number(r.cancellationFee)} estimatedRefund={amount||0}/></span></div>;
             })}
           </div>
         </section>

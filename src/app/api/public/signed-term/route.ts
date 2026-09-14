@@ -9,7 +9,7 @@ export async function POST(req: Request) {
     assertTrustedOrigin(req);
     enforceRateLimit(req, "signed-term-upload", Math.min(configuredLimit("RATE_LIMIT_PUBLIC_PER_10_MIN", 20), 6), 10 * 60_000);
     const session = await getCustomerSession();
-    if (!session) return Response.json({ error: "Unauthorized" }, { status: 401 });
+    if (!session) return Response.json({ error: "Sua sessão expirou." }, { status: 401 });
     if (session.sub === "demo-contract") return Response.json({ ok: true, status: "SIGNED_RECEIVED" });
 
     const form = await req.formData();
@@ -31,7 +31,7 @@ export async function POST(req: Request) {
       await tx.auditEvent.create({ data: { requestId: cancellation.id, action: "SIGNED_TERM_UPLOADED", entity: "Attachment", entityId: attachment.id, after: { sha256: meta.sha256, mimeType: meta.mimeType, sizeBytes: meta.sizeBytes }, ...fingerprint } });
       return attachment;
     });
-    return Response.json({ ok: true, attachmentId: att.id, status: "SIGNED_RECEIVED", message: "Termo assinado recebido e protegido no sistema." });
+    return Response.json({ ok: true, attachmentId: att.id, status: "SIGNED_RECEIVED", message: "Termo assinado recebido." });
   } catch (error) {
     if (error instanceof Response) return error;
     const code = error instanceof Error ? error.message : "UPLOAD_ERROR";

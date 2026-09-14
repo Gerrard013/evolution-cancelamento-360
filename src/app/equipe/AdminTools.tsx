@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 type SyncedContract = { id: string; unit: string; planName: string; status: string; endDate?: string | null };
 
@@ -19,11 +19,6 @@ export default function AdminTools() {
   const [loading, setLoading] = useState(false);
   const [manualMode,setManualMode]=useState(false);
   const [manual,setManual]=useState<ManualForm>(initialManual);
-  const [usage, setUsage] = useState<{ hitCount: number; softLimit: number; hardLimit: number } | null>(null);
-
-  useEffect(() => {
-    fetch("/api/admin/evo/usage", { cache: "no-store" }).then(r => r.ok ? r.json() : null).then(setUsage).catch(() => null);
-  }, []);
 
   async function sync() {
     setMessage(""); setContracts([]); setManualMode(false); setLoading(true);
@@ -32,7 +27,7 @@ export default function AdminTools() {
       const data = await r.json();
       if (r.status===409) {
         setManualMode(true);
-        setMessage("A API do EVO ainda não está conectada. Você pode cadastrar os dados do contrato agora e começar a usar o sistema; depois a integração substituirá esta etapa manual.");
+        setMessage("A busca automática está temporariamente indisponível. Cadastre os dados do contrato abaixo para continuar o atendimento.");
         return;
       }
       if (!r.ok) throw new Error(data.error || "Não foi possível localizar o aluno");
@@ -88,14 +83,14 @@ export default function AdminTools() {
 
   return (
     <section className="admin-tools glass operational-card">
-      <div className="section-title"><div><p className="eyebrow">INICIAR ATENDIMENTO</p><h2>Localizar aluno pela matrícula EVO</h2><p className="section-help">Digite a matrícula do aluno, confira o contrato e clique em “Atender aluno agora”. O formulário abre neste mesmo aparelho, sem link ou código para copiar.</p></div><button onClick={logout}>Sair</button></div>
+      <div className="section-title"><div><p className="eyebrow">ATENDIMENTO ASSISTIDO</p><h2>Localizar aluno pela matrícula EVO</h2><p className="section-help">Use esta opção quando o aluno precisar de ajuda da equipe. Localize o contrato e abra o formulário no mesmo aparelho.</p></div><button onClick={logout}>Sair</button></div>
       <div className="tool-row">
         <input inputMode="numeric" value={memberId} onChange={e => setMemberId(e.target.value.replace(/[^0-9A-Za-z._-]/g,""))} placeholder="Matrícula EVO" autoComplete="off" />
         <button className="btn primary" disabled={loading || !memberId.trim()} onClick={sync}>{loading ? "Localizando..." : "Buscar aluno"}</button>
       </div>
 
       {manualMode&&<div className="manual-entry">
-        <div className="manual-head"><b>Cadastro rápido enquanto a API não está conectada</b><span>Use os dados que já aparecem no EVO/W12.</span></div>
+        <div className="manual-head"><b>Cadastro do contrato</b><span>Confira os dados no EVO/W12 e preencha abaixo.</span></div>
         <div className="form-grid">
           <label>Nome do aluno<input value={manual.displayName} onChange={e=>setManual({...manual,displayName:e.target.value})} placeholder="Nome completo"/></label>
           <label>Unidade<select value={manual.unit} onChange={e=>setManual({...manual,unit:e.target.value as ManualForm["unit"]})}><option>Condor</option><option>Umarizal</option></select></label>
@@ -111,7 +106,6 @@ export default function AdminTools() {
       {customerName&&contracts.length>0&&<div className="customer-found"><span>Aluno</span><h3>{customerName}</h3></div>}
       {contracts.length > 0 && <div className="synced-contracts clean-contracts">{contracts.map(c => <div key={c.id}><span><b>{c.planName}</b><small>{c.unit} • {c.status==="ACTIVE"?"Ativo":c.status}</small></span><button onClick={() => issue(c.id)} disabled={loading||c.status!=="ACTIVE"}>{loading?"Abrindo...":"Atender aluno agora"}</button></div>)}</div>}
       {message && <div className="info-box">{message}</div>}
-      {usage && <details className="api-usage"><summary>Consumo da API EVO</summary><div><span>Requisições neste mês</span><b>{usage.hitCount} de {usage.hardLimit}</b><small>Alerta interno em {usage.softLimit}.</small></div></details>}
     </section>
   );
 }

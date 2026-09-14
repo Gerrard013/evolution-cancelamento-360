@@ -3,8 +3,9 @@ import crypto from "node:crypto";
 
 export const ADMIN_COOKIE = "evo360_admin";
 export const CUSTOMER_COOKIE = "evo360_customer";
+export const PREAUTH_COOKIE = "evo360_preauth";
 
-type SessionKind = "admin" | "customer";
+type SessionKind = "admin" | "customer" | "preauth";
 export type SessionPayload = {
   kind: SessionKind;
   sub: string;
@@ -55,6 +56,11 @@ export async function getAdminSession(): Promise<SessionPayload | null> {
 export async function getCustomerSession(): Promise<SessionPayload | null> {
   const jar = await cookies();
   return verifySessionToken(jar.get(CUSTOMER_COOKIE)?.value, "customer");
+}
+
+export async function getPreauthSession(): Promise<SessionPayload | null> {
+  const jar = await cookies();
+  return verifySessionToken(jar.get(PREAUTH_COOKIE)?.value, "preauth");
 }
 
 export function secureCookieOptions(maxAge: number) {

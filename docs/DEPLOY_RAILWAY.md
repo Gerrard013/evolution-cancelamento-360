@@ -1,64 +1,58 @@
-# Deploy seguro no Railway
+# Deploy no Railway — v6
 
-## 1. Banco
-Adicione PostgreSQL ao projeto e use a `DATABASE_URL` fornecida pelo Railway.
+## Serviços
 
-## 2. Variáveis obrigatórias
-Configure no serviço web:
-- `APP_ORIGIN=https://SEU-DOMINIO`
-- `NEXT_PUBLIC_DEMO_MODE=false`
-- `SESSION_SECRET`
-- `PUBLIC_ID_PEPPER`
-- `EXTERNAL_ID_PEPPER`
-- `IP_HASH_PEPPER`
-- `APP_DATA_ENCRYPTION_KEY`
-- `ADMIN_EMAIL`
-- `ADMIN_PASSWORD_HASH`
-- `ADMIN_TOTP_SECRET`
+O projeto deve ter:
+- `Postgres` Online;
+- `evolution-cancelamento-360` conectado ao GitHub.
 
-Depois adicione as variáveis EVO quando a integração for homologada.
+## Variável crítica do banco
 
-## 3. Gerar segredos
-Exemplos no Mac/Linux:
+No serviço **evolution-cancelamento-360**, não no Postgres:
+
+```env
+DATABASE_URL=${{Postgres.DATABASE_URL}}
+```
+
+Sem essa referência o Prisma encerra com `P1012 Environment variable not found: DATABASE_URL`.
+
+## Segredos
+
+Gere localmente:
+
 ```bash
+openssl rand -base64 48
+openssl rand -base64 48
+openssl rand -base64 48
 openssl rand -base64 48
 openssl rand -base64 32
 ```
 
-Para a chave AES, use exatamente 32 bytes codificados em Base64:
+Use os quatro primeiros para `SESSION_SECRET`, `PUBLIC_ID_PEPPER`, `EXTERNAL_ID_PEPPER`, `IP_HASH_PEPPER` e o último para `APP_DATA_ENCRYPTION_KEY`.
+
+## Administradores
+
 ```bash
-openssl rand -base64 32
+npm run admin:hash -- "SENHA-FORTE-COM-14-OU-MAIS-CARACTERES"
 ```
 
-Hash de senha administrativa:
+Configure `ADMIN_1_*` para Gerrard e `ADMIN_2_*` para Ruy. Não coloque senha em texto puro.
+
+## Banco
+
+O container inicia com:
+
 ```bash
-npm run admin:hash -- "SUA-SENHA-FORTE"
+npx prisma db push && node server.js
 ```
 
-## 4. Banco/schema
-Antes do piloto:
-```bash
-npm install
-npx prisma generate
-npx prisma db push
-```
+Em uma evolução futura de produção, substitua `db push` por migrations versionadas.
 
-Para produção madura, prefira migrations versionadas em vez de `db push`.
+## Depois do deploy
 
-## 5. Healthcheck
-Use `/api/health`.
-
-## 6. Domínio e borda
-- domínio HTTPS próprio;
-- WAF/CDN reverso;
-- rate limit de borda;
-- bloqueio de bots;
-- logs e alertas;
-- backups.
-
-## 7. Não fazer
-- não cadastrar `EVO_API_TOKEN` em variável `NEXT_PUBLIC_*`;
-- não colocar token no código;
-- não colocar `.env` no GitHub;
-- não ativar escrita EVO antes de teste em homologação;
-- não deixar `NEXT_PUBLIC_DEMO_MODE=true` em produção.
+1. confirmar Deployment Active;
+2. abrir `/api/health`;
+3. testar login da equipe;
+4. configurar EVO `read`;
+5. testar portal com uma matrícula conhecida;
+6. só então homologar escrita.

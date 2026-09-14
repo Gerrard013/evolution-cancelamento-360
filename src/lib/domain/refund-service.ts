@@ -1,81 +1,120 @@
 import { prisma } from "@/lib/db/prisma";
-import { calculateRefund } from "@/lib/calc/refund";
 
-const DAY_MS = 86_400_000;
-const SOURCE_ANNUAL_RATE = 0.244; // 14,4% + 10% conforme modelo fornecido
-const SOURCE_RECURRING_FEE = 258;
+const ANNUAL_ADVANCE_RATE = 0.144;
+const ANNUAL_CONTRACT_RATE = 0.10;
+export const RECURRING_EARLY_CANCEL_FEE = 258;
 
-function daysBetween(a: Date, b: Date): number {
-  return Math.max(0, Math.ceil((b.getTime() - a.getTime()) / DAY_MS));
+function round(value: number) {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
-export async function activeCalculationRule(at = new Date()) {
-  return prisma.calculationRule.findFirst({
-    where: { active: true, effectiveFrom: { lte: at }, OR: [{ effectiveTo: null }, { effectiveTo: { gte: at } }] },
-    orderBy: { effectiveFrom: "desc" }
-  });
+function calendarMonthsUsedInclusive(start: Date, at: Date) {
+  if (at < start) return 0;
+  const diff = (at.getUTCFullYear() - start.getUTCFullYear()) * 12 + (at.getUTCMonth() - start.getUTCMonth());
+  return Math.min(12, Math.max(1, diff + 1));
 }
 
-async function sourceAnnualReferenceRule() {
+function anniversaryOneYear(start: Date) {
+  const d = new Date(start);
+  d.setUTCFullYear(d.getUTCFullYear() + 1);
+  return d;
+}
+
+export async function ensureAnnualOperationalRule() {
   return prisma.calculationRule.upsert({
-    where: { version: "SOURCE-ANUAL-2026-v1" },
+    where: { version: "EVOLUTION-ANUAL-14.4-10-v2" },
     create: {
-      version: "SOURCE-ANUAL-2026-v1",
-      name: "Referência do termo anual: 14,4% + 10%",
-      percentage: SOURCE_ANNUAL_RATE,
+      version: "EVOLUTION-ANUAL-14.4-10-v2",
+      name: "Plano anual — meses restantes menos 14,4% e 10% do valor total",
+      percentage: ANNUAL_ADVANCE_RATE + ANNUAL_CONTRACT_RATE,
       effectiveFrom: new Date("2026-01-01T00:00:00.000Z"),
-      criteria: { formula: "daily-proration", source: "PEDIDO_CANCELAMENTO_PLANO_ANUAL", breakdown: [{ label: "antecipacao_parcelas", rate: 0.144 }, { label: "multa_taxa_sistema", rate: 0.10 }], requiresFinancialValidation: true },
-      active: false,
-      approvedBy: "SYSTEM_SOURCE_REFERENCE",
-      approvedAt: null
+      criteria: {
+        formula: "(valor_total/12*meses_restantes)-(valor_total*0.144)-(valor_total*0.10)",
+        annualMonths: 12,
+        advanceRate: ANNUAL_ADVANCE_RATE,
+        contractRate: ANNUAL_CONTRACT_RATE
+      },
+      active: true,
+      approvedBy: "EVOLUTION_OPERATIONAL_RULE",
+      approvedAt: new Date()
     },
-    update: {}
+    update: {
+      percentage: ANNUAL_ADVANCE_RATE + ANNUAL_CONTRACT_RATE,
+      criteria: {
+        formula: "(valor_total/12*meses_restantes)-(valor_total*0.144)-(valor_total*0.10)",
+        annualMonths: 12,
+        advanceRate: ANNUAL_ADVANCE_RATE,
+        contractRate: ANNUAL_CONTRACT_RATE
+      }
+    }
   });
 }
 
 export async function previewForContract(contractId: string, desiredDate: Date) {
   const contract = await prisma.contract.findUnique({ where: { id: contractId } });
   if (!contract) throw new Error("CONTRACT_NOT_FOUND");
-  const looksRecurring = contract.recurring || /recorr/i.test(`${contract.planType} ${contract.planName}`);
 
+  const looksRecurring = contract.recurring || /recorr/i.test(`${contract.planType} ${contract.planName}`);
   if (looksRecurring) {
+    const anniversary = anniversaryOneYear(contract.startDate);
+    const feeRequired = desiredDate < anniversary;
     return {
+      kind: "RECURRING" as const,
       eligible: false as const,
-      reason: "O modelo recorrente fornecido não define fórmula automática de estorno. Ele informa multa de R$ 258,00 e antecedência de 30 dias da próxima mensalidade; o financeiro deve validar a aplicação ao contrato.",
-      feeReference: SOURCE_RECURRING_FEE,
-      noticeDays: 30
+      refund: 0,
+      feeRequired,
+      feeAmount: feeRequired ? RECURRING_EARLY_CANCEL_FEE : 0,
+      oneYearDate: anniversary.toISOString(),
+      reason: feeRequired
+        ? "Plano recorrente não possui estorno. Como o cancelamento ocorre antes de completar 12 meses, há taxa de cancelamento de R$ 258,00."
+        : "Plano recorrente não possui estorno. O contrato já completou 12 meses e não há taxa de cancelamento antecipado."
     };
   }
 
-  if (!contract.endDate) {
-    return { eligible: false as const, reason: "O contrato não possui data final suficiente para uma prévia automática segura. A equipe fará a conferência." };
+  const total = Number(contract.amountPaid);
+  if (!Number.isFinite(total) || total <= 0) {
+    return { kind: "ANNUAL" as const, eligible: false as const, reason: "O valor total do plano precisa ser conferido antes do cálculo." };
   }
 
-  let rule = await activeCalculationRule(desiredDate);
-  if (!rule || rule.percentage === null) rule = await sourceAnnualReferenceRule();
-
-  const contractedDays = Math.max(1, daysBetween(contract.startDate, contract.endDate));
-  const effectiveCancelDate = desiredDate < contract.startDate ? contract.startDate : desiredDate;
-  const unusedDays = Math.min(contractedDays, daysBetween(effectiveCancelDate, contract.endDate));
-  const calculation = calculateRefund({ amountPaid: Number(contract.amountPaid), contractedDays, unusedDays, deductionRate: Number(rule.percentage), priorRefunds: 0 });
-  const sourceBreakdown = rule.version === "SOURCE-ANUAL-2026-v1"
-    ? {
-        advanceDeduction: Math.round(calculation.unusedBalance * 0.144 * 100) / 100,
-        contractFee: Math.round(calculation.unusedBalance * 0.10 * 100) / 100
-      }
-    : null;
+  const monthsUsed = calendarMonthsUsedInclusive(contract.startDate, desiredDate);
+  const monthsRemaining = Math.max(0, 12 - monthsUsed);
+  const monthlyReference = round(total / 12);
+  const unusedBalance = round(monthlyReference * monthsRemaining);
+  const advanceDeduction = round(total * ANNUAL_ADVANCE_RATE);
+  const contractFee = round(total * ANNUAL_CONTRACT_RATE);
+  const deduction = round(advanceDeduction + contractFee);
+  const estimatedRefund = round(Math.max(0, unusedBalance - deduction));
+  const rule = await ensureAnnualOperationalRule();
 
   return {
+    kind: "ANNUAL" as const,
     eligible: true as const,
     rule: { id: rule.id, version: rule.version, name: rule.name, percentage: Number(rule.percentage) },
     calculation: {
-      ...calculation,
-      ...(sourceBreakdown || {}),
+      amountPaid: total,
+      totalContractValue: total,
+      monthlyReference,
+      monthsUsed,
+      monthsRemaining,
+      unusedBalance,
+      advanceDeduction,
+      contractFee,
+      deduction,
+      priorRefunds: 0,
+      estimatedRefund,
       memory: {
-        ...calculation.memory,
-        legalReference: rule.version === "SOURCE-ANUAL-2026-v1" ? "14,4% + 10% do modelo anual fornecido" : "regra administrativa ativa",
-        breakdown: sourceBreakdown ? [{ label: "antecipacao_parcelas", rate: 0.144 }, { label: "multa_taxa_sistema", rate: 0.10 }] : undefined,
-        requiresFinancialValidation: true
+        formula: "(valor total ÷ 12 × meses restantes) − 14,4% do valor total − 10% do valor total",
+        annualMonths: 12,
+        advanceRate: ANNUAL_ADVANCE_RATE,
+        contractRate: ANNUAL_CONTRACT_RATE,
+        monthsUsed,
+        monthsRemaining,
+        monthlyReference,
+        unusedBalance,
+        advanceDeduction,
+        contractFee,
+        deduction,
+        estimatedRefund
       }
     }
   };

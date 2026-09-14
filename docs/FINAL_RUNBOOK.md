@@ -1,86 +1,77 @@
-# Runbook operacional — Final v3
+# Runbook operacional — Final v6
 
-## 1. Funcionalidades e propósito
+## 1. O que entra em produção
 
-| Funcionalidade | Propósito |
-|---|---|
-| Pesquisa por ID EVO | Localizar o aluno sem pedir CPF no portal público. |
-| Normalização Condor/Umarizal | Evitar pedido associado à unidade errada. |
-| Código temporário do aluno | Impedir enumeração/IDOR usando matrícula previsível. |
-| Cache EVO | Reduzir hits e manter o plano Plus dentro do limite. |
-| Prévia de estorno | Dar transparência ao aluno sem executar pagamento automaticamente. |
-| Protocolo único | Rastreabilidade ponta a ponta. |
-| Termo gerado em PDF | Eliminar preenchimento manual e divergência de dados. |
-| Upload do termo assinado | Substituir o retorno por e-mail por um fluxo ligado ao protocolo. |
-| Arquivo privado | Evitar exposição pública de documentos. |
-| Fila administrativa | Permitir conferência humana de casos de risco/erro. |
-| Escrita EVO por feature flag | Impedir cancelamentos acidentais antes da homologação. |
-| Idempotency-Key | Evitar cancelamento duplicado em retries. |
-| Auditoria | Registrar quem/quando/o que mudou. |
-| Rate limit | Reduzir brute force e abuso. |
-| CSP/HSTS/anti-clickjacking | Hardening web contra classes comuns de ataque. |
-| HMAC/criptografia de IDs | Reduzir exposição de identificadores internos no banco/logs. |
+### Portal do aluno
+- solicitação sem e-mail;
+- matrícula EVO + data de nascimento;
+- contratos ativos vindos do EVO;
+- cálculo anual automático;
+- regra recorrente de R$ 258 antes de 12 meses;
+- geração do termo PDF;
+- upload do termo assinado;
+- upload do comprovante da taxa quando aplicável;
+- protocolo e consulta posterior do status.
 
-## 2. Fluxo da equipe
+### Painel da equipe
+- login separado de Gerrard e Ruy;
+- fila de pedidos;
+- atendimento assistido pela matrícula;
+- download do termo assinado;
+- download do comprovante da taxa;
+- confirmação da taxa;
+- execução do cancelamento;
+- confirmação manual quando a escrita EVO estiver desativada;
+- registro de estorno;
+- auditoria.
 
-1. Login com MFA.
-2. Informar matrícula EVO, por exemplo `29965`.
-3. O sistema consulta aluno + contratos.
-4. Confirmar unidade e plano.
-5. Gerar ID temporário para o contrato correto.
-6. Entregar o código ao aluno por canal confiável.
-7. Acompanhar o protocolo no painel.
-8. Quando aparecer **Termo assinado**, baixar somente em estação corporativa protegida.
-9. Aprovar/revisar conforme política financeira.
+## 2. Estados principais
 
-## 3. Fluxo do aluno
+- `AWAITING_SIGNATURE`: termo gerado e aguardando upload.
+- `SIGNED_RECEIVED`: termo assinado recebido.
+- `FEE_PENDING`: taxa de R$ 258 pendente/aguardando confirmação.
+- `READY_TO_CANCEL`: todos os pré-requisitos concluídos.
+- `UNDER_REVIEW`: EVO aceitou a operação mas ainda não confirmou cancelamento.
+- `MANUAL_REVIEW`: a equipe precisa concluir ou conferir no EVO.
+- `REFUND_PENDING`: contrato cancelado e há estorno a pagar.
+- `COMPLETED`: fluxo concluído.
 
-1. Informar o código temporário.
-2. Confirmar contrato/unidade.
-3. Informar motivo e data desejada.
-4. Visualizar prévia, se calculável.
-5. Informar endereço/e-mail e PIX apenas quando aplicável ao plano anual.
-6. Gerar PDF.
-7. Assinar.
-8. Fazer upload.
-9. Concluir e guardar protocolo.
+A interface mostra rótulos em português, não códigos internos.
 
-O processo pode ser retomado: se o aluno sair depois de gerar o termo ou depois do upload, o mesmo código temporário abre a solicitação pendente enquanto estiver válido.
+## 3. Segurança
 
-## 4. Estados principais
+- token EVO apenas no backend/Railway;
+- cookies HttpOnly + Secure + SameSite;
+- rate limit no login e portal;
+- matrícula + data de nascimento para reduzir enumeração;
+- IDs externos pseudonimizados por HMAC e criptografados quando precisam ser reutilizados;
+- termo/comprovante privado no PostgreSQL;
+- PDF/JPG/PNG até 8 MB;
+- magic bytes, MIME, SHA-256 e bloqueio de PDF ativo suspeito;
+- CSP, HSTS, anti-clickjacking e nosniff;
+- trilha de auditoria;
+- `write` EVO desativado até homologação.
 
-- `AWAITING_SIGNATURE`: termo gerado, aguardando upload.
-- `SIGNED_RECEIVED`: documento recebido.
-- `UNDER_REVIEW`: pedido completo em análise.
-- `EVO_CANCEL_REQUESTED`: escrita solicitada ao EVO.
-- `EVO_CANCELLED`: EVO confirmou cancelamento.
-- `MANUAL_REVIEW`: integração não conseguiu confirmar com segurança.
-- `REFUND_PENDING`: financeiro precisa tratar eventual estorno.
-- `COMPLETED`: processo encerrado.
+## 4. Implantação hoje
 
-## 5. Upload e malware
+1. Postgres Online no Railway.
+2. Aplicação com `DATABASE_URL=${{Postgres.DATABASE_URL}}`.
+3. Configurar segredos e hashes dos administradores.
+4. Fazer deploy e confirmar `/api/health`.
+5. Configurar API EVO em `read`.
+6. Testar ID conhecido, por exemplo 29965.
+7. Validar nome, nascimento, Condor/Umarizal, contrato, tipo, início e valor total do plano.
+8. Fazer um cancelamento de teste completo até o protocolo.
+9. Só depois configurar rotas de escrita.
 
-Controles implementados no app:
+## 5. Homologação de escrita
 
-- apenas PDF/JPG/PNG;
-- máximo de 8 MB;
-- validação pelo conteúdo real (magic bytes), não apenas extensão;
-- MIME compatível;
-- nome sanitizado;
-- SHA-256;
-- PDFs com `/JavaScript`, `/JS`, `/OpenAction`, `/Launch`, `/EmbeddedFile`, `/RichMedia` ou `/AA` são rejeitados;
-- armazenamento privado no PostgreSQL;
-- documentos administrativos são entregues como `Content-Disposition: attachment` e `nosniff`;
-- nenhum upload é colocado em `public/` ou executado.
+- testar `EVO_CANCEL_CONTRACT_PATH` com contrato de homologação;
+- confirmar resposta que significa cancelado de fato;
+- testar `EVO_REMOVE_PAYMENT_METHOD_PATH` em plano recorrente;
+- manter `CUSTOMER_DIRECT_CANCELLATION=false` durante homologação;
+- somente após os testes liberar automação direta, se Ruy aprovar.
 
-Para defesa empresarial adicional, use antivírus/EDR no endpoint administrativo e, se o volume crescer, mover o arquivo para storage privado com scanner dedicado de malware. O sistema não afirma que análise por assinatura substitui um antivírus completo.
+## 6. Nota fiscal
 
-## 6. Regras financeiras dos modelos recebidos
-
-### Recorrente
-O documento de referência informa multa de R$ 258,00 e antecedência de 30 dias, mas não oferece fórmula de estorno suficiente. Portanto o sistema **não inventa estorno automático** para recorrente; envia para conferência.
-
-### Anual
-O documento de referência menciona 14,4% sobre antecipação das parcelas + 10% de multa/taxa do sistema. Quando não existe regra financeira formal cadastrada, o sistema usa 24,4% somente como referência de **prévia**, sobre o saldo proporcional não utilizado. O valor continua sujeito à validação financeira.
-
-Antes de uso financeiro definitivo, cadastre e aprove uma regra oficial da Evolution.
+O EVO possui configuração para cancelar nota fiscal quando o estorno for feito. Não criar uma segunda chamada fiscal sem confirmar o comportamento da conta, para não duplicar o cancelamento da NF.

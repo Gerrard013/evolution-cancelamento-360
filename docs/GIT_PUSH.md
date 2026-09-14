@@ -1,26 +1,35 @@
-# Git push — repositório oficial
+# Atualizar GitHub e Railway com a v6
 
-Repositório identificado no projeto:
-`https://github.com/Gerrard013/evolution-cancelamento-360.git`
-
-Depois de substituir/atualizar os arquivos no seu clone local:
+Entre no Terminal dentro da pasta extraída `evolution-cancelamento-360-final-v6` e execute:
 
 ```bash
-cd ~/Desktop/evolution-cancelamento-360-ultra-mvp
+SOURCE="$PWD"
+TEMP="$HOME/Desktop/evolution-cancelamento-360-push-v6"
 
-npm install
-npm run security:check
-npm run typecheck
-npm run build
+rm -rf "$TEMP"
+git clone https://github.com/Gerrard013/evolution-cancelamento-360.git "$TEMP"
+cd "$TEMP"
+git checkout main
+git pull origin main
+
+rsync -av --delete \
+  --exclude='.git' \
+  --exclude='.env' \
+  --exclude='.env.local' \
+  --exclude='node_modules' \
+  --exclude='.next' \
+  --exclude='.DS_Store' \
+  "$SOURCE"/ "$TEMP"/
+
+git add -A
+git status
+git commit -m "feat: Evolution Cancelamento 360 Final Oficial v6"
+git push origin main
 
 git status
-git add .
-git commit -m "feat: secure v2 EVO integration LGPD hardening"
-git branch -M main
-git remote set-url origin https://github.com/Gerrard013/evolution-cancelamento-360.git
-git push -u origin main
+git log --oneline -5
 ```
 
-O `npm install` cria/atualiza `package-lock.json`; comite esse arquivo junto para travar dependências.
+Não use `git push --force`.
 
-Nunca faça `git add .env`. Os segredos ficam no Railway.
+Se o Railway estiver conectado à branch `main`, o novo deploy inicia automaticamente após o push.

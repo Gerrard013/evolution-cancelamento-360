@@ -3,12 +3,14 @@ export const requestStatusLabel: Record<string, string> = {
   SENT: "Recebido",
   AWAITING_SIGNATURE: "Aguardando assinatura",
   SIGNED_RECEIVED: "Termo assinado recebido",
-  UNDER_REVIEW: "Em análise",
+  FEE_PENDING: "Aguardando pagamento da taxa",
+  READY_TO_CANCEL: "Pronto para cancelamento",
+  UNDER_REVIEW: "Em conferência",
   APPROVED: "Aprovado",
-  MANUAL_REVIEW: "Conferência da equipe",
-  EVO_CANCEL_REQUESTED: "Cancelamento enviado ao EVO",
-  EVO_CANCELLED: "Cancelado no EVO",
-  CANCELLED_CONFIRMED: "Cancelamento confirmado",
+  MANUAL_REVIEW: "Ação da equipe necessária",
+  EVO_CANCEL_REQUESTED: "Cancelamento em processamento",
+  EVO_CANCELLED: "Contrato cancelado",
+  CANCELLED_CONFIRMED: "Contrato cancelado",
   REFUND_PENDING: "Estorno pendente",
   REFUND_REGISTERED: "Estorno registrado",
   COMPLETED: "Concluído",
@@ -17,5 +19,5 @@ export const requestStatusLabel: Record<string, string> = {
 };
 
 export function friendlyStatus(status: string) {
-  return requestStatusLabel[status] || status.replaceAll("_", " ").toLowerCase();
+  return requestStatusLabel[status] || "Em andamento";
 }

@@ -32,7 +32,7 @@ const gitignore = fs.readFileSync(path.join(root, ".gitignore"), "utf8");
 if (!gitignore.split(/\r?\n/).includes(".env")) failures.push(".gitignore must ignore .env");
 
 try {
-  const tracked = execFileSync("git", ["ls-files", ".env", ".env.local"], { cwd: root, encoding: "utf8" }).trim();
+  const tracked = execFileSync("git", ["ls-files", ".env", ".env.local"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
   if (tracked) failures.push(`Sensitive env file is tracked: ${tracked}`);
 } catch {}
 

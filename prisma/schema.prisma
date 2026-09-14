@@ -12,6 +12,8 @@ enum RequestStatus {
   SENT
   AWAITING_SIGNATURE
   SIGNED_RECEIVED
+  FEE_PENDING
+  READY_TO_CANCEL
   UNDER_REVIEW
   APPROVED
   MANUAL_REVIEW
@@ -119,6 +121,9 @@ model CancellationRequest {
   requesterAddress   String?
   contactEmail       String?
   pixKey             String?
+  cancellationFee    Decimal       @default(0) @db.Decimal(12, 2)
+  cancellationFeePaidAt DateTime?
+  paymentMethodRemovalStatus String?
   evoOperationId     String?
   evoLastErrorCode   String?
   evoLastAttemptAt   DateTime?

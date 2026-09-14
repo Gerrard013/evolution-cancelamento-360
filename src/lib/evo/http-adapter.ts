@@ -1,7 +1,7 @@
 import { getCached, setCached } from "./cache";
 import { recordEvoHit } from "./usage";
 import type { EvoAdapter } from "./adapter";
-import type { EvoCancelResult, EvoContract, EvoCustomer } from "./types";
+import type { EvoCancelResult, EvoContract, EvoCustomer, EvoPaymentMethodResult } from "./types";
 
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 
@@ -94,47 +94,85 @@ function obj(input: unknown): Record<string, unknown> {
   return input && typeof input === "object" && !Array.isArray(input) ? input as Record<string, unknown> : {};
 }
 
+function asEntityName(value: unknown): string | undefined {
+  const direct = asString(value);
+  if (direct) return direct;
+  const data = obj(value);
+  return asString(pick(data, "name", "nome", "title", "descricao", "description"));
+}
+
+function normalizeDateString(value: unknown): string | undefined {
+  const raw = asString(value)?.trim();
+  if (!raw) return undefined;
+  const br = raw.match(/^(\d{2})[\/-](\d{2})[\/-](\d{4})$/);
+  if (br) return `${br[3]}-${br[2]}-${br[1]}T00:00:00.000Z`;
+  const iso = new Date(raw);
+  return Number.isNaN(iso.getTime()) ? raw : iso.toISOString();
+}
+
+function firstPayloadObject(raw: unknown): Record<string, unknown> {
+  if (Array.isArray(raw)) return obj(raw[0]);
+  const root = obj(raw);
+  for (const key of ["data", "item", "result", "member", "customer", "cliente", "aluno"]) {
+    const value = root[key];
+    if (Array.isArray(value) && value.length) return obj(value[0]);
+    if (value && typeof value === "object") return obj(value);
+  }
+  return root;
+}
+
 function pick(data: Record<string, unknown>, ...keys: string[]): unknown {
   for (const key of keys) if (data[key] !== undefined && data[key] !== null) return data[key];
   return undefined;
 }
 
 function mapCustomer(raw: unknown): EvoCustomer | null {
-  const root = obj(raw);
-  const data = obj(root.data && !Array.isArray(root.data) ? root.data : root);
+  const data = firstPayloadObject(raw);
   const id = asString(pick(data, "id", "externalId", "memberId", "idMember", "idCliente"));
   if (!id) return null;
   const name = asString(pick(data, "name", "nome", "fullName", "nomeCompleto")) || "Cliente";
-  const phone = asString(pick(data, "phone", "telefone", "mobile", "celular"));
+  const phone = asString(pick(data, "phone", "telefone", "mobile", "celular", "phoneNumber"));
   const email = asString(pick(data, "email"));
-  const hint = phone ? `•••• ${phone.replace(/\D/g, "").slice(-4)}` : email ? email.replace(/^(.).+(@.*)$/, "$1•••$2") : undefined;
-  return { externalId: id, name, contactHint: hint };
+  const birthDate = normalizeDateString(pick(data, "birthDate", "dateOfBirth", "dataNascimento", "birth_date", "birthday", "data_nascimento"));
+  const digits = phone?.replace(/\D/g, "") || "";
+  const phoneLast4 = digits.length >= 4 ? digits.slice(-4) : undefined;
+  const hint = phoneLast4 ? `•••• ${phoneLast4}` : email ? email.replace(/^(.).+(@.*)$/, "$1•••$2") : undefined;
+  return { externalId: id, name, contactHint: hint, birthDate, phoneLast4 };
 }
 
-function mapContract(raw: unknown): EvoContract | null {
+function mapContract(raw: unknown, fallbackCustomerId?: string): EvoContract | null {
   const data = obj(raw);
   const id = asString(pick(data, "id", "externalId", "contractId", "idContract", "idContrato"));
-  const customerId = asString(pick(data, "customerExternalId", "memberId", "idMember", "customerId", "idCliente"));
+  const customerId = asString(pick(data, "customerExternalId", "memberId", "idMember", "customerId", "idCliente")) || fallbackCustomerId;
   if (!id || !customerId) return null;
   return {
     externalId: id,
     customerExternalId: customerId,
-    unit: asString(pick(data, "unit", "unidade", "branch", "branchName")) || "Evolution",
-    planName: asString(pick(data, "planName", "plan", "plano", "membershipName")) || "Plano",
-    planType: asString(pick(data, "planType", "tipoPlano", "type")) || "UNKNOWN",
-    startDate: asString(pick(data, "startDate", "inicio", "dateStart")) || new Date().toISOString(),
-    endDate: asString(pick(data, "endDate", "fim", "dateEnd")),
-    amountPaid: asNumber(pick(data, "amountPaid", "valorPago", "paidAmount", "totalPaid")),
+    unit: asEntityName(pick(data, "unit", "unidade", "branch", "branchName", "branchUnit")) || "Evolution",
+    planName: asEntityName(pick(data, "planName", "plan", "plano", "membershipName", "membership")) || "Plano",
+    planType: asEntityName(pick(data, "planType", "tipoPlano", "type", "membershipType")) || "UNKNOWN",
+    startDate: normalizeDateString(pick(data, "startDate", "inicio", "dateStart", "start_date", "dataInicio")) || new Date().toISOString(),
+    endDate: normalizeDateString(pick(data, "endDate", "fim", "dateEnd", "end_date", "dataFim")),
+    amountPaid: asNumber(pick(data, "contractValue", "valorContrato", "totalAmount", "totalValue", "valorTotal", "value", "price", "amountPaid", "valorPago", "paidAmount", "totalPaid")),
     recurring: asBoolean(pick(data, "recurring", "recorrente", "isRecurring")),
-    status: asString(pick(data, "status", "situacao")) || "UNKNOWN"
+    status: asEntityName(pick(data, "status", "situacao", "contractStatus")) || "UNKNOWN",
+    paymentMethodId: asString(pick(data, "paymentMethodId", "idPaymentMethod", "paymentId", "idFormaPagamento")),
+    hasStoredCard: asBoolean(pick(data, "hasStoredCard", "cardStored", "cartaoSalvo", "hasCard"))
   };
 }
 
 function arrayPayload(raw: unknown): unknown[] {
   if (Array.isArray(raw)) return raw;
   const data = obj(raw);
-  for (const key of ["data", "items", "results", "contracts", "contratos"]) {
-    if (Array.isArray(data[key])) return data[key] as unknown[];
+  for (const key of ["data", "items", "results", "contracts", "contratos", "memberships", "membershipsContracts"]) {
+    const value = data[key];
+    if (Array.isArray(value)) return value;
+    if (value && typeof value === "object") {
+      const nested = obj(value);
+      for (const nestedKey of ["items", "results", "contracts", "contratos", "data"]) {
+        if (Array.isArray(nested[nestedKey])) return nested[nestedKey] as unknown[];
+      }
+    }
   }
   return [];
 }
@@ -155,7 +193,7 @@ export class HttpEvoAdapter implements EvoAdapter {
     const cached = await getCached<EvoContract[]>(cacheKey);
     if (cached) return cached;
     const raw = await evoFetch(pathFromEnv("EVO_CONTRACTS_BY_MEMBER_PATH", { id: customerExternalId, memberId: customerExternalId }));
-    const contracts = arrayPayload(raw).map(mapContract).filter((v): v is EvoContract => Boolean(v));
+    const contracts = arrayPayload(raw).map(item => mapContract(item, customerExternalId)).filter((v): v is EvoContract => Boolean(v));
     await setCached(cacheKey, contracts, 600);
     return contracts;
   }
@@ -187,4 +225,21 @@ export class HttpEvoAdapter implements EvoAdapter {
       rawStatus: asString(pick(data, "status", "situacao"))
     };
   }
+
+  async removeStoredPaymentMethod(contractExternalId: string, customerExternalId: string, protocol: string): Promise<EvoPaymentMethodResult> {
+    if (process.env.EVO_INTEGRATION_MODE !== "write" || process.env.EVO_WRITE_ENABLED !== "true" || process.env.EVO_REMOVE_PAYMENT_METHOD_ENABLED !== "true") {
+      throw new Error("EVO_PAYMENT_METHOD_WRITE_DISABLED");
+    }
+    const path = pathFromEnv("EVO_REMOVE_PAYMENT_METHOD_PATH", { id: contractExternalId, contractId: contractExternalId, memberId: customerExternalId, customerId: customerExternalId });
+    const method = (process.env.EVO_REMOVE_PAYMENT_METHOD_METHOD || "DELETE").toUpperCase();
+    if (!["DELETE", "PUT"].includes(method)) throw new Error("EVO_REMOVE_PAYMENT_METHOD_METHOD_INVALID");
+    const raw = await evoFetch(path, {
+      method,
+      headers: { "Idempotency-Key": `${protocol}-payment-method` },
+      body: method === "PUT" ? JSON.stringify({ active: false, removeCard: true, protocol }) : undefined
+    });
+    const data = obj(raw);
+    return { removed: true, operationId: asString(pick(data, "operationId", "id", "requestId")) };
+  }
+
 }

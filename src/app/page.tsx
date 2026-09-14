@@ -1,35 +1,22 @@
+import SelfServiceStart from "./SelfServiceStart";
+
 export default function Home() {
   return (
-    <main className="simple-home">
+    <main className="official-home">
       <nav className="simple-nav">
-        <div className="brand-lockup">
-          <div className="brand-dot" />
-          <div><b>EVOLUTION</b><span>Cancelamento 360</span></div>
-        </div>
+        <div className="brand-lockup"><div className="brand-dot"/><div><b>EVOLUTION</b><span>Cancelamento Online</span></div></div>
         <a className="nav-link" href="/equipe">Área da equipe</a>
       </nav>
-
-      <section className="simple-hero">
-        <div className="simple-copy">
-          <p className="eyebrow">CANCELAMENTO DE CONTRATO</p>
-          <h1>Cancelamento do início ao comprovante.</h1>
-          <p className="lead">A equipe localiza o aluno pela matrícula EVO, confere o contrato e inicia o atendimento. O aluno vê a prévia, gera o termo, assina e envia o documento no próprio sistema.</p>
-          <div className="hero-actions">
-            <a className="btn primary" href="/equipe">Iniciar atendimento</a>
-          </div>
-          <div className="plain-features">
-            <div><b>Sem CPF no portal</b><span>A matrícula EVO é usada pela equipe para localizar o cadastro.</span></div>
-            <div><b>Condor e Umarizal</b><span>Unidade, plano e contrato são conferidos antes do cancelamento.</span></div>
-            <div><b>Sem link confuso</b><span>A equipe inicia o atendimento e entrega a tela diretamente ao aluno.</span></div>
-            <div><b>Termo + protocolo</b><span>O sistema gera o PDF, recebe o termo assinado e registra o protocolo.</span></div>
-          </div>
+      <section className="official-hero">
+        <div className="official-copy">
+          <p className="eyebrow">CANAL OFICIAL DE CANCELAMENTO</p>
+          <h1>Resolva seu cancelamento online.</h1>
+          <p className="lead">Faça todo o pedido pelo portal: localize o contrato, veja os valores aplicáveis, gere o termo, envie o documento assinado e acompanhe pelo protocolo.</p>
+          <div className="official-points"><span>Sem e-mail</span><span>Sem fila na recepção</span><span>Protocolo digital</span><span>Termo no próprio portal</span></div>
         </div>
-        <div className="simple-visual glass">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/evolution-intro.jpeg" alt="Evolution Academia" />
-          <div className="visual-caption"><b>Evolution Cancelamento 360</b><span>Fluxo digital de cancelamento</span></div>
-        </div>
+        <SelfServiceStart/>
       </section>
+      <footer className="official-footer">Evolution Academia • Unidades Condor e Umarizal</footer>
     </main>
   );
 }

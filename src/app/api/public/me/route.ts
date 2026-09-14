@@ -3,7 +3,7 @@ import { getCustomerSession } from "@/lib/security/session";
 
 export async function GET() {
   const session = await getCustomerSession();
-  if (!session) return Response.json({ error: "Unauthorized" }, { status: 401 });
+  if (!session) return Response.json({ error: "Sua sessão expirou." }, { status: 401 });
   if (session.sub === "demo-contract") {
     return Response.json({
       customer: { displayName: "Cliente Demonstração" },

@@ -4,7 +4,6 @@ export class ManualEvoAdapter implements EvoAdapter {
   async findCustomerById() { return null; }
   async listContracts() { return []; }
   async getContract() { return null; }
-  async cancelContract(): Promise<never> {
-    throw new Error("EVO_WRITE_DISABLED");
-  }
+  async cancelContract(): Promise<never> { throw new Error("EVO_WRITE_DISABLED"); }
+  async removeStoredPaymentMethod(): Promise<never> { throw new Error("EVO_PAYMENT_METHOD_WRITE_DISABLED"); }
 }

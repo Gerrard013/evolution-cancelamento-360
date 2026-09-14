@@ -22,7 +22,7 @@ export async function POST(req: Request) {
     assertTrustedOrigin(req);
     enforceRateLimit(req, "cancel-draft", Math.min(configuredLimit("RATE_LIMIT_PUBLIC_PER_10_MIN", 20), 8), 10 * 60_000);
     const session = await getCustomerSession();
-    if (!session) return Response.json({ error: "Unauthorized" }, { status: 401 });
+    if (!session) return Response.json({ error: "Sua sessão expirou. Volte ao início e confirme seus dados novamente." }, { status: 401 });
     const input = schema.parse(await readJsonLimited(req, 24_000));
 
     if (session.sub === "demo-contract") {
@@ -33,7 +33,7 @@ export async function POST(req: Request) {
     if (!contract || contract.status !== "ACTIVE") return Response.json({ error: "Contrato não está disponível para cancelamento" }, { status: 409 });
 
     const existing = await prisma.cancellationRequest.findUnique({ where: { activeKey: `${contract.id}:ACTIVE` } });
-    if (existing) return Response.json({ error: "Já existe uma solicitação aberta", protocol: existing.protocol, status: existing.status }, { status: 409 });
+    if (existing) return Response.json({ error: `Já existe uma solicitação aberta para este contrato. Protocolo ${existing.protocol}.`, protocol: existing.protocol, status: existing.status }, { status: 409 });
 
     const preview = await previewForContract(contract.id, input.desiredDate).catch(() => null);
     const protocol = newProtocol();
@@ -58,10 +58,11 @@ export async function POST(req: Request) {
           termGeneratedAt: new Date(),
           requesterAddress: input.requesterAddress || null,
           contactEmail: input.contactEmail || null,
-          pixKey: input.pixKey || null
+          pixKey: input.pixKey || null,
+          cancellationFee: preview?.kind === "RECURRING" && preview.feeRequired ? preview.feeAmount : 0
         }
       });
-      if (preview?.eligible) {
+      if (preview?.kind === "ANNUAL" && preview.eligible) {
         await tx.refundCalculation.create({
           data: {
             requestId: request.id,
@@ -79,10 +80,10 @@ export async function POST(req: Request) {
       return request;
     });
 
-    return Response.json({ protocol, status: created.status, termUrl: `/api/public/term/${encodeURIComponent(protocol)}`, message: "Termo gerado. Baixe, assine e envie o arquivo assinado pelo portal." }, { status: 201 });
+    return Response.json({ protocol, status: created.status, termUrl: `/api/public/term/${encodeURIComponent(protocol)}`, message: "Termo gerado. Baixe, assine e envie o arquivo assinado para concluir." }, { status: 201 });
   } catch (error) {
     if (error instanceof Response) return error;
-    if (error instanceof z.ZodError) return Response.json({ error: "Dados inválidos" }, { status: 400 });
+    if (error instanceof z.ZodError) return Response.json({ error: "Confira os dados do pedido antes de continuar." }, { status: 400 });
     return Response.json({ error: "Não foi possível gerar o termo de cancelamento" }, { status: 500 });
   }
 }

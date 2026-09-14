@@ -1,111 +1,76 @@
-# Evolution Cancelamento 360 — Operacional v5
+# Evolution Cancelamento 360 — Final Operacional v6
 
-Versão preparada para demonstração e operação assistida na recepção, sem SMTP e sem link/código visível para o aluno.
+Canal digital oficial de cancelamento da Evolution Academia para as unidades **Condor** e **Umarizal**. O objetivo é retirar o cancelamento do e-mail e reduzir atendimentos presenciais: o aluno solicita pelo próprio portal e a equipe acompanha a execução no painel administrativo.
 
-## Fluxo principal
+## Fluxo do aluno
 
-### Equipe (Gerrard / Ruy)
-1. Entrar em `/equipe` com usuário e senha.
-2. Digitar a matrícula EVO do aluno, por exemplo `29965`.
-3. Com API EVO em `read`, o sistema traz aluno, unidade, plano e contrato automaticamente.
-4. Enquanto a API não estiver ligada, o cadastro rápido permite informar esses dados manualmente.
-5. Conferir o contrato e clicar **Atender aluno agora**.
-6. O sistema cria uma sessão interna segura e abre o formulário do aluno no mesmo aparelho. Nenhum link ou código precisa ser copiado.
+1. Informa **matrícula EVO + data de nascimento**. Não usa CPF.
+2. O sistema consulta o EVO/W12 e mostra somente contratos ativos daquele aluno.
+3. O aluno escolhe o contrato, informa motivo e data do cancelamento.
+4. O sistema apresenta os valores aplicáveis.
+5. Gera o termo de cancelamento em PDF.
+6. O aluno assina e faz upload do termo no próprio portal.
+7. Recebe protocolo.
+8. Pode voltar ao início e usar **Consultar protocolo** para acompanhar o pedido.
 
-### Aluno
-1. Confere nome, Condor/Umarizal, plano e contrato.
-2. Informa motivo e data desejada.
-3. Se for plano anual e houver dados suficientes, vê a prévia de estorno.
-4. O cálculo de referência mostra separadamente 14,4% (antecipação das parcelas) + 10% (multa/taxa do sistema), aplicados sobre o saldo proporcional não utilizado, como **estimativa sujeita à conferência financeira**.
-5. Preenche endereço e, quando aplicável, chave PIX.
-6. Gera e baixa o termo PDF.
-7. Assina e envia PDF/JPG/PNG no próprio sistema.
-8. Recebe protocolo e o pedido entra na fila administrativa.
+## Plano anual — regra operacional
+
+- valor mensal = valor total do plano ÷ 12;
+- meses utilizados = meses de calendário entre o mês de início e o mês do pedido, contando os dois meses;
+- meses restantes = 12 − meses utilizados;
+- saldo restante = valor mensal × meses restantes;
+- desconto de antecipação = **14,4% do valor total**;
+- multa/taxa = **10% do valor total**;
+- estorno = `máximo(0, saldo restante − 14,4% − 10%)`.
+
+Exemplo confirmado no projeto: plano de R$ 1.200,00, início em 30/12/2025 e cancelamento em 13/09/2026. São 10 meses considerados utilizados e 2 restantes. Valor mensal de R$ 100,00; saldo restante R$ 200,00; 14,4% = R$ 172,80; 10% = R$ 120,00; estorno final = **R$ 0,00**.
+
+> O percentual implementado é 14,4%, conforme o termo anual fornecido. Por isso, em R$ 1.200,00 o valor correto é R$ 172,80.
 
 ## Plano recorrente
 
-O modelo fornecido informa multa de referência de R$ 258,00 e antecedência de 30 dias da próxima mensalidade. Como o documento não fornece fórmula automática segura de estorno para o recorrente, o sistema sinaliza conferência financeira em vez de inventar cálculo.
+- não existe estorno;
+- antes de completar 12 meses: taxa de cancelamento de **R$ 258,00**;
+- com 12 meses ou mais: sem taxa antecipada;
+- após a taxa ser confirmada, quando aplicável, o contrato segue para cancelamento;
+- após o cancelamento, a forma de pagamento/cartão recorrente pode ser removida automaticamente pelo EVO quando o endpoint de escrita estiver homologado.
 
-## Sem SMTP
+## Painel da equipe
 
-O sistema não depende de SMTP. O termo é gerado, baixado e depois enviado pelo próprio portal. O documento fica vinculado ao protocolo no PostgreSQL. Caso a Evolution aprove o fluxo digital como procedimento oficial, ele substitui a troca manual de e-mails para esse processo.
+Gerrard e Ruy possuem acessos separados. O painel mostra pedidos, termo assinado, comprovante da taxa, status, valor de estorno, confirmação de taxa, execução do cancelamento e registro do estorno.
 
-## Dois acessos de equipe
+Existe também um atendimento assistido: a equipe localiza o aluno pela matrícula e abre o formulário no mesmo aparelho. Nenhum link ou código é exibido ao aluno.
 
-Configure no Railway:
+## API EVO/W12
 
-```env
-ADMIN_1_NAME="Gerrard"
-ADMIN_1_USERNAME="gerrard"
-ADMIN_1_PASSWORD_HASH="..."
-ADMIN_2_NAME="Ruy"
-ADMIN_2_USERNAME="ruy"
-ADMIN_2_PASSWORD_HASH="..."
-```
+O código já está preparado para `manual`, `read` e `write`.
 
-Gere cada hash localmente:
+- `read`: aluno/ID, contratos, unidade, plano, datas e valor do contrato;
+- `write`: cancelamento do contrato;
+- remoção de pagamento: endpoint separado para retirar cartão/forma recorrente após o cancelamento.
 
-```bash
-npm run admin:hash -- "SENHA-FORTE-COM-14-OU-MAIS-CARACTERES"
-```
+Os **paths reais** precisam ser copiados da documentação/homologação EVO. O projeto não inventa endpoint destrutivo.
 
-Não coloque senhas em texto puro no GitHub.
+Documentação informada pelo suporte: `https://api.abcevo.com/`.
 
-## Railway — variáveis mínimas para demonstrar hoje
+## Railway
 
-```env
-DATABASE_URL="${{Postgres.DATABASE_URL}}"
-APP_ORIGIN="https://evolution-cancelamento-360-production.up.railway.app"
-NEXT_PUBLIC_DEMO_MODE="false"
-SESSION_SECRET="..."
-PUBLIC_ID_PEPPER="..."
-EXTERNAL_ID_PEPPER="..."
-APP_DATA_ENCRYPTION_KEY="..."
-IP_HASH_PEPPER="..."
-ADMIN_1_NAME="Gerrard"
-ADMIN_1_USERNAME="gerrard"
-ADMIN_1_PASSWORD_HASH="..."
-ADMIN_2_NAME="Ruy"
-ADMIN_2_USERNAME="ruy"
-ADMIN_2_PASSWORD_HASH="..."
-EVO_INTEGRATION_MODE="manual"
-EVO_WRITE_ENABLED="false"
-CUSTOMER_DIRECT_CANCELLATION="false"
-```
-
-O container executa `prisma db push` ao iniciar para manter as tabelas necessárias no PostgreSQL do Railway.
-
-## Integração EVO
-
-Para a demonstração, use `manual`. Para integrar dados reais:
-
-1. Configurar token/credencial EVO **somente no Railway**.
-2. Mudar para `EVO_INTEGRATION_MODE="read"`.
-3. Testar matrícula real, unidade Condor/Umarizal, plano, contrato e valores.
-4. Somente após homologar leitura e endpoint oficial de cancelamento, usar `write`.
-5. Manter `CUSTOMER_DIRECT_CANCELLATION="false"` no início: a equipe aprova o cancelamento antes de escrever no EVO.
-
-Variáveis esperadas:
+A aplicação precisa receber:
 
 ```env
-EVO_API_BASE_URL="..."
-EVO_API_TOKEN="..."
-EVO_API_USERNAME="..."
-EVO_AUTH_MODE="bearer"
-EVO_MEMBER_BY_ID_PATH="..."
-EVO_CONTRACTS_BY_MEMBER_PATH="..."
-EVO_CONTRACT_BY_ID_PATH="..."
-EVO_CANCEL_CONTRACT_PATH="..."
-EVO_CANCEL_METHOD="DELETE"
+DATABASE_URL=${{Postgres.DATABASE_URL}}
 ```
 
-Nunca use `NEXT_PUBLIC_` em segredos EVO.
+O Docker executa `prisma db push` antes de iniciar. Todas as credenciais EVO e chaves de segurança ficam somente nas Variables do Railway.
 
 ## Verificações
 
 ```bash
 npm run security:check
+npm run business:check
 npm run production:check
 npm run typecheck
 npm run build
 ```
+
+Consulte `docs/FINAL_RUNBOOK.md` e `docs/API_EVO_CONFIG_AGORA.md` para implantação.

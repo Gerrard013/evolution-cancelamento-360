@@ -35,7 +35,7 @@ export default function LoginForm() {
     <form className="login-card glass" onSubmit={submit}>
       <p className="eyebrow">ACESSO DA EQUIPE</p>
       <h1>Central de cancelamentos</h1>
-      <p className="lead compact">Acesso exclusivo de Gerrard e Ruy. Não depende de e-mail, SMTP ou código de confirmação.</p>
+      <p className="lead compact">Acesso exclusivo da equipe responsável pelos cancelamentos.</p>
       {error && <div className="error-box" role="alert">{error}</div>}
       <label>Usuário<input type="text" autoComplete="username" value={username} onChange={e => setUsername(e.target.value.replace(/[^A-Za-z0-9._-]/g, ""))} placeholder="gerrard ou ruy" required /></label>
       <label>Senha<input type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} minLength={14} required /></label>

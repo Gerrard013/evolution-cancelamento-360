@@ -2,6 +2,8 @@ export type EvoCustomer = {
   externalId: string;
   name: string;
   contactHint?: string;
+  birthDate?: string;
+  phoneLast4?: string;
 };
 
 export type EvoContract = {
@@ -15,10 +17,17 @@ export type EvoContract = {
   amountPaid: number;
   recurring: boolean;
   status: string;
+  paymentMethodId?: string;
+  hasStoredCard?: boolean;
 };
 
 export type EvoCancelResult = {
   operationId?: string;
   status: "cancelled" | "accepted";
   rawStatus?: string;
+};
+
+export type EvoPaymentMethodResult = {
+  removed: boolean;
+  operationId?: string;
 };
