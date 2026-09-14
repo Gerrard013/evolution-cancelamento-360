@@ -118,6 +118,11 @@ function authHeaders(): Record<string, string> {
   if (mode === "header") return { [process.env.EVO_TOKEN_HEADER || "x-api-key"]: token };
   return { Authorization: `Bearer ${token}` };
 }
+
+function wait(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 async function activeClientsRaw() {
   if (snapshot && Date.now() - snapshot.at < 30_000) return snapshot.raw;
   const base = process.env.EVO_API_BASE_URL?.trim();
@@ -126,27 +131,44 @@ async function activeClientsRaw() {
   const baseUrl = new URL(base);
   const target = new URL(path, baseUrl);
   if (baseUrl.protocol !== "https:" || target.origin !== baseUrl.origin) throw new Error("EVO_ACTIVE_CLIENTS_INVALID_URL");
-  const usage = await recordEvoHit();
-  if (usage.hitCount > usage.hardLimit) throw new Error("EVO_API_BUDGET_HARD_LIMIT");
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), Number(process.env.EVO_REQUEST_TIMEOUT_MS || 20000));
-  try {
-    const response = await fetch(target, {
-      headers: { Accept: "application/json", ...authHeaders() },
-      redirect: "error",
-      cache: "no-store",
-      signal: controller.signal
-    });
-    const text = await response.text();
-    const bytes = Buffer.byteLength(text, "utf8");
-    if (bytes > maxResponseBytes()) throw new Error("EVO_RESPONSE_TOO_LARGE");
-    if (!response.ok) throw new Error(`EVO_HTTP_${response.status}`);
-    const raw = text ? JSON.parse(text) : {};
-    snapshot = { at: Date.now(), raw };
-    return raw;
-  } finally {
-    clearTimeout(timeout);
+
+  const attempts = 2;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const usage = await recordEvoHit();
+    if (usage.hitCount > usage.hardLimit) throw new Error("EVO_API_BUDGET_HARD_LIMIT");
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), Number(process.env.EVO_REQUEST_TIMEOUT_MS || 20000));
+    try {
+      const response = await fetch(target, {
+        headers: { Accept: "application/json", ...authHeaders() },
+        redirect: "error",
+        cache: "no-store",
+        signal: controller.signal
+      });
+      const text = await response.text();
+      const bytes = Buffer.byteLength(text, "utf8");
+      if (bytes > maxResponseBytes()) throw new Error("EVO_RESPONSE_TOO_LARGE");
+
+      if (!response.ok) {
+        const retryable = [502, 503, 504].includes(response.status);
+        console.error("[EVO_ACTIVE_CLIENTS_HTTP]", response.status, text.slice(0, 500));
+        if (retryable && attempt < attempts) {
+          await wait(700 * attempt);
+          continue;
+        }
+        throw new Error(`EVO_HTTP_${response.status}`);
+      }
+
+      const raw = text ? JSON.parse(text) : {};
+      snapshot = { at: Date.now(), raw };
+      return raw;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
+
+  throw new Error("EVO_HTTP_502");
 }
 export class ActiveClientsEvoAdapter implements EvoAdapter {
   private readonly fallback = new HttpEvoAdapter();
