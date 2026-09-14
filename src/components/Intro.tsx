@@ -6,10 +6,10 @@ export default function Intro({ onFinish }: { onFinish: () => void }) {
   const [phase, setPhase] = useState(0);
 
   useEffect(() => {
-    const a = window.setTimeout(() => setPhase(1), 500);
-    const b = window.setTimeout(() => setPhase(2), 1800);
-    const c = window.setTimeout(() => setPhase(3), 3200);
-    const d = window.setTimeout(onFinish, 4700);
+    const a = window.setTimeout(() => setPhase(1), 350);
+    const b = window.setTimeout(() => setPhase(2), 1450);
+    const c = window.setTimeout(() => setPhase(3), 2800);
+    const d = window.setTimeout(onFinish, 4300);
     return () => [a, b, c, d].forEach(window.clearTimeout);
   }, [onFinish]);
 
@@ -29,14 +29,14 @@ export default function Intro({ onFinish }: { onFinish: () => void }) {
           <div className="scanline" />
         </div>
         <div className="intro-copy">
-          <p className="eyebrow">G TECH // EVOLUTION ACADEMIA</p>
+          <p className="eyebrow">EVOLUTION ACADEMIA • CANAL DIGITAL</p>
           <h1><span>EVO</span>LUTION</h1>
           <h2>CANCELAMENTO <strong>360</strong></h2>
-          <p className="intro-status">{phase < 2 ? "INICIALIZANDO WORKFLOW" : "PROCESSO. CONTROLE. RASTREABILIDADE."}</p>
+          <p className="intro-status">{phase < 2 ? "PREPARANDO SUA EXPERIÊNCIA" : "CANCELE. ACOMPANHE. RESOLVA."}</p>
         </div>
       </div>
 
-      <button className="skip-intro" onClick={onFinish}>Pular intro</button>
+      <button className="skip-intro" onClick={onFinish}>Entrar agora</button>
       <div className="intro-progress"><i /></div>
     </section>
   );
