@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import "./immersive.css";
 import ImmersiveShell from "@/components/ImmersiveShell";
 
 export const dynamic = "force-dynamic";
