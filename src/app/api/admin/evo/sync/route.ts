@@ -27,13 +27,20 @@ export async function POST(req: Request) {
         id: contract.id,
         unit: contract.unit,
         planName: contract.planName,
+        planType: contract.planType,
         status: contract.status,
-        endDate: contract.endDate
+        startDate: contract.startDate,
+        endDate: contract.endDate,
+        amountPaid: Number(contract.amountPaid),
+        recurring: contract.recurring,
+        syncedAt: contract.syncedAt,
+        metadata: contract.metadata
       }))
     });
   } catch (error) {
     if (error instanceof Response) return error;
     if (error instanceof z.ZodError) return Response.json({ error: "Matrícula EVO inválida." }, { status: 400 });
-    return Response.json({ error: "Não foi possível localizar o aluno agora." }, { status: 502 });
+    const code = error instanceof Error ? error.message : "EVO_SYNC_ERROR";
+    return Response.json({ error: "Não foi possível localizar o aluno agora.", code }, { status: 502 });
   }
 }
