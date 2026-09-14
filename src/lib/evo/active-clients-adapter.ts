@@ -3,9 +3,13 @@ import type { EvoCancelResult, EvoContract, EvoCustomer, EvoPaymentMethodResult 
 import { HttpEvoAdapter } from "./http-adapter";
 import { recordEvoHit } from "./usage";
 
-const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+const DEFAULT_MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 let snapshot: { at: number; raw: unknown } | null = null;
 
+function maxResponseBytes() {
+  const configured = Number(process.env.EVO_MAX_RESPONSE_BYTES || DEFAULT_MAX_RESPONSE_BYTES);
+  return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_MAX_RESPONSE_BYTES;
+}
 function pick(data: Record<string, unknown>, ...keys: string[]) {
   for (const key of keys) if (data[key] !== undefined && data[key] !== null) return data[key];
   return undefined;
@@ -125,16 +129,24 @@ async function activeClientsRaw() {
   const usage = await recordEvoHit();
   if (usage.hitCount > usage.hardLimit) throw new Error("EVO_API_BUDGET_HARD_LIMIT");
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), Number(process.env.EVO_REQUEST_TIMEOUT_MS || 8000));
+  const timeout = setTimeout(() => controller.abort(), Number(process.env.EVO_REQUEST_TIMEOUT_MS || 20000));
   try {
-    const response = await fetch(target, { headers: { Accept: "application/json", ...authHeaders() }, redirect: "error", cache: "no-store", signal: controller.signal });
+    const response = await fetch(target, {
+      headers: { Accept: "application/json", ...authHeaders() },
+      redirect: "error",
+      cache: "no-store",
+      signal: controller.signal
+    });
     const text = await response.text();
-    if (Buffer.byteLength(text, "utf8") > MAX_RESPONSE_BYTES) throw new Error("EVO_RESPONSE_TOO_LARGE");
+    const bytes = Buffer.byteLength(text, "utf8");
+    if (bytes > maxResponseBytes()) throw new Error("EVO_RESPONSE_TOO_LARGE");
     if (!response.ok) throw new Error(`EVO_HTTP_${response.status}`);
     const raw = text ? JSON.parse(text) : {};
     snapshot = { at: Date.now(), raw };
     return raw;
-  } finally { clearTimeout(timeout); }
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 export class ActiveClientsEvoAdapter implements EvoAdapter {
   private readonly fallback = new HttpEvoAdapter();
