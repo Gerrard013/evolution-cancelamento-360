@@ -1,17 +1,20 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import ImmersiveShell from "@/components/ImmersiveShell";
 
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "Evolution Cancelamento 360",
-  description: "Plataforma G Tech para cancelamentos, cálculo de estorno, aprovações e auditoria."
+  description: "Canal oficial da Evolution Academia para cancelamentos, protocolos e acompanhamento digital."
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="pt-BR">
-      <body>{children}</body>
+      <body>
+        <ImmersiveShell>{children}</ImmersiveShell>
+      </body>
     </html>
   );
 }
