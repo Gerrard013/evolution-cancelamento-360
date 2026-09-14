@@ -3,16 +3,13 @@ import type { EvoCancelResult, EvoContract, EvoCustomer, EvoPaymentMethodResult 
 import { HttpEvoAdapter } from "./http-adapter";
 import { recordEvoHit } from "./usage";
 
-const DEFAULT_MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
-let snapshot: { at: number; raw: unknown } | null = null;
+const DEFAULT_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+const PROFILE_TTL_MS = 30_000;
+const profileCache = new Map<string, { at: number; raw: Record<string, unknown> }>();
 
 function maxResponseBytes() {
   const configured = Number(process.env.EVO_MAX_RESPONSE_BYTES || DEFAULT_MAX_RESPONSE_BYTES);
   return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_MAX_RESPONSE_BYTES;
-}
-function pick(data: Record<string, unknown>, ...keys: string[]) {
-  for (const key of keys) if (data[key] !== undefined && data[key] !== null) return data[key];
-  return undefined;
 }
 function obj(input: unknown): Record<string, unknown> {
   return input && typeof input === "object" && !Array.isArray(input) ? input as Record<string, unknown> : {};
@@ -27,12 +24,6 @@ function num(value: unknown) {
 function bool(value: unknown) {
   return value === true || value === 1 || value === "1" || String(value).toLowerCase() === "true";
 }
-function nameOf(value: unknown) {
-  const direct = str(value);
-  if (direct) return direct;
-  const data = obj(value);
-  return str(pick(data, "name", "nome", "title", "descricao", "description"));
-}
 function dateOf(value: unknown) {
   const raw = str(value)?.trim();
   if (!raw) return undefined;
@@ -40,71 +31,6 @@ function dateOf(value: unknown) {
   if (br) return `${br[3]}-${br[2]}-${br[1]}T00:00:00.000Z`;
   const date = new Date(raw);
   return Number.isNaN(date.getTime()) ? raw : date.toISOString();
-}
-function idOf(data: Record<string, unknown>) {
-  return str(pick(data, "id", "externalId", "memberId", "idMember", "idCliente", "idCustomer", "clientId", "idClient"));
-}
-function rows(raw: unknown): Record<string, unknown>[] {
-  if (Array.isArray(raw)) return raw.map(obj);
-  const root = obj(raw);
-  for (const key of ["data", "items", "results", "clients", "clientes", "activeClients", "activeclients"]) {
-    const value = root[key];
-    if (Array.isArray(value)) return value.map(obj);
-    if (value && typeof value === "object") {
-      const nested = obj(value);
-      for (const nestedKey of ["data", "items", "results", "clients", "clientes"]) {
-        if (Array.isArray(nested[nestedKey])) return (nested[nestedKey] as unknown[]).map(obj);
-      }
-    }
-  }
-  return [];
-}
-function customerFrom(data: Record<string, unknown>): EvoCustomer | null {
-  const externalId = idOf(data);
-  if (!externalId) return null;
-  const name = str(pick(data, "name", "nome", "fullName", "nomeCompleto", "clientName", "customerName")) || "Cliente";
-  const phone = str(pick(data, "phone", "telefone", "mobile", "celular", "phoneNumber"));
-  const email = str(pick(data, "email"));
-  const birthDate = dateOf(pick(data, "birthDate", "dateOfBirth", "dataNascimento", "birth_date", "birthday", "data_nascimento"));
-  const digits = phone?.replace(/\D/g, "") || "";
-  const phoneLast4 = digits.length >= 4 ? digits.slice(-4) : undefined;
-  const contactHint = phoneLast4 ? `•••• ${phoneLast4}` : email ? email.replace(/^(.).+(@.*)$/, "$1•••$2") : undefined;
-  return { externalId, name, birthDate, phoneLast4, contactHint };
-}
-function looksLikeContract(data: Record<string, unknown>) {
-  const keys = Object.keys(data).map(k => k.toLowerCase());
-  const signals = ["contract", "contrato", "membership", "plan", "plano", "startdate", "datainicio", "dateend", "enddate", "valorcontrato", "contractvalue"];
-  return signals.filter(signal => keys.some(k => k.includes(signal))).length >= 2;
-}
-function collectContracts(value: unknown, fallbackCustomerId: string, out: EvoContract[], depth = 0) {
-  if (depth > 5 || value == null) return;
-  if (Array.isArray(value)) {
-    for (const item of value) collectContracts(item, fallbackCustomerId, out, depth + 1);
-    return;
-  }
-  if (typeof value !== "object") return;
-  const data = obj(value);
-  if (looksLikeContract(data)) {
-    const externalId = str(pick(data, "contractId", "idContract", "idContrato", "externalId", "id"));
-    if (externalId) {
-      const customerExternalId = str(pick(data, "customerExternalId", "memberId", "idMember", "customerId", "idCliente")) || fallbackCustomerId;
-      out.push({
-        externalId,
-        customerExternalId,
-        unit: nameOf(pick(data, "unit", "unidade", "branch", "branchName", "branchUnit", "location")) || "Evolution",
-        planName: nameOf(pick(data, "planName", "plan", "plano", "membershipName", "membership", "serviceName", "servico")) || "Plano",
-        planType: nameOf(pick(data, "planType", "tipoPlano", "type", "membershipType", "serviceType")) || "UNKNOWN",
-        startDate: dateOf(pick(data, "startDate", "inicio", "dateStart", "start_date", "dataInicio", "contractStart")) || new Date().toISOString(),
-        endDate: dateOf(pick(data, "endDate", "fim", "dateEnd", "end_date", "dataFim", "contractEnd")),
-        amountPaid: num(pick(data, "contractValue", "valorContrato", "totalAmount", "totalValue", "valorTotal", "value", "price", "amountPaid", "valorPago", "paidAmount", "totalPaid")),
-        recurring: bool(pick(data, "recurring", "recorrente", "isRecurring")),
-        status: nameOf(pick(data, "status", "situacao", "contractStatus")) || "ACTIVE",
-        paymentMethodId: str(pick(data, "paymentMethodId", "idPaymentMethod", "paymentId", "idFormaPagamento")),
-        hasStoredCard: bool(pick(data, "hasStoredCard", "cardStored", "cartaoSalvo", "hasCard"))
-      });
-    }
-  }
-  for (const nested of Object.values(data)) collectContracts(nested, fallbackCustomerId, out, depth + 1);
 }
 function authHeaders(): Record<string, string> {
   const token = process.env.EVO_API_TOKEN?.trim();
@@ -118,50 +44,52 @@ function authHeaders(): Record<string, string> {
   if (mode === "header") return { [process.env.EVO_TOKEN_HEADER || "x-api-key"]: token };
   return { Authorization: `Bearer ${token}` };
 }
-
 function wait(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
+function profilePath(memberId: string) {
+  const template = process.env.EVO_MEMBER_PROFILE_PATH || "/api/v1/members/{idMember}";
+  return template.replace("{idMember}", encodeURIComponent(memberId));
+}
 
-async function activeClientsRaw() {
-  if (snapshot && Date.now() - snapshot.at < 30_000) return snapshot.raw;
+async function memberProfileRaw(memberId: string) {
+  const cached = profileCache.get(memberId);
+  if (cached && Date.now() - cached.at < PROFILE_TTL_MS) return cached.raw;
+
   const base = process.env.EVO_API_BASE_URL?.trim();
-  const path = process.env.EVO_ACTIVE_CLIENTS_PATH?.trim();
-  if (!base || !path) throw new Error("EVO_ACTIVE_CLIENTS_NOT_CONFIGURED");
+  if (!base) throw new Error("EVO_API_BASE_URL_NOT_CONFIGURED");
   const baseUrl = new URL(base);
-  const target = new URL(path, baseUrl);
-  if (baseUrl.protocol !== "https:" || target.origin !== baseUrl.origin) throw new Error("EVO_ACTIVE_CLIENTS_INVALID_URL");
+  const target = new URL(profilePath(memberId), baseUrl);
+  if (baseUrl.protocol !== "https:" || target.origin !== baseUrl.origin) throw new Error("EVO_MEMBER_PROFILE_INVALID_URL");
 
-  const attempts = 2;
-  for (let attempt = 1; attempt <= attempts; attempt++) {
+  for (let attempt = 1; attempt <= 2; attempt++) {
     const usage = await recordEvoHit();
     if (usage.hitCount > usage.hardLimit) throw new Error("EVO_API_BUDGET_HARD_LIMIT");
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), Number(process.env.EVO_REQUEST_TIMEOUT_MS || 20000));
+    const timeout = setTimeout(() => controller.abort(), Number(process.env.EVO_REQUEST_TIMEOUT_MS || 12000));
     try {
       const response = await fetch(target, {
-        headers: { Accept: "application/json", ...authHeaders() },
+        headers: { Accept: "application/json, text/json, text/plain", ...authHeaders() },
         redirect: "error",
         cache: "no-store",
         signal: controller.signal
       });
       const text = await response.text();
-      const bytes = Buffer.byteLength(text, "utf8");
-      if (bytes > maxResponseBytes()) throw new Error("EVO_RESPONSE_TOO_LARGE");
+      if (Buffer.byteLength(text, "utf8") > maxResponseBytes()) throw new Error("EVO_RESPONSE_TOO_LARGE");
 
       if (!response.ok) {
-        const retryable = [502, 503, 504].includes(response.status);
-        console.error("[EVO_ACTIVE_CLIENTS_HTTP]", response.status, text.slice(0, 500));
-        if (retryable && attempt < attempts) {
-          await wait(700 * attempt);
+        console.error("[EVO_MEMBER_PROFILE_HTTP]", response.status, text.slice(0, 500));
+        if ([502, 503, 504].includes(response.status) && attempt < 2) {
+          await wait(600 * attempt);
           continue;
         }
         throw new Error(`EVO_HTTP_${response.status}`);
       }
 
-      const raw = text ? JSON.parse(text) : {};
-      snapshot = { at: Date.now(), raw };
+      const parsed = text ? JSON.parse(text) : {};
+      const raw = obj(parsed);
+      profileCache.set(memberId, { at: Date.now(), raw });
       return raw;
     } finally {
       clearTimeout(timeout);
@@ -170,22 +98,99 @@ async function activeClientsRaw() {
 
   throw new Error("EVO_HTTP_502");
 }
+
+function customerFromProfile(data: Record<string, unknown>): EvoCustomer | null {
+  const externalId = str(data.idMember ?? data.id_member ?? data.id);
+  if (!externalId) return null;
+
+  const firstName = str(data.firstName ?? data.first_name) || "";
+  const lastName = str(data.lastName ?? data.last_name) || "";
+  const name = `${firstName} ${lastName}`.trim() || str(data.name) || "Cliente";
+  const birthDate = dateOf(data.birthDate ?? data.birth_date);
+  const email = str(data.email);
+
+  let phoneLast4: string | undefined;
+  const contacts = Array.isArray(data.contacts) ? data.contacts : [];
+  for (const contact of contacts) {
+    const c = obj(contact);
+    const candidate = str(c.description ?? c.contact ?? c.number ?? c.phone ?? c.value);
+    const digits = candidate?.replace(/\D/g, "") || "";
+    if (digits.length >= 4) {
+      phoneLast4 = digits.slice(-4);
+      break;
+    }
+  }
+
+  const contactHint = phoneLast4 ? `•••• ${phoneLast4}` : email ? email.replace(/^(.).+(@.*)$/, "$1•••$2") : undefined;
+  return { externalId, name, birthDate, phoneLast4, contactHint };
+}
+
+function membershipStatus(value: unknown) {
+  const raw = str(value)?.trim() || "ACTIVE";
+  const upper = raw.toUpperCase();
+  if (upper.includes("ATIV") || upper.includes("ACTIVE") || upper.includes("VIGENT")) return "ACTIVE";
+  return raw;
+}
+
+function contractsFromProfile(data: Record<string, unknown>, customerExternalId: string): EvoContract[] {
+  const branchName = str(data.branchName ?? data.branch_name) || "Evolution";
+  const source = Array.isArray(data.memberships)
+    ? data.memberships
+    : data.membership && typeof data.membership === "object"
+      ? [data.membership]
+      : [];
+
+  const contracts: EvoContract[] = [];
+  for (const entry of source) {
+    const membership = obj(entry);
+    const externalId = str(
+      membership.idMemberMembership ??
+      membership.id_member_membership ??
+      membership.idMembership ??
+      membership.id_membership ??
+      membership._IdVenda ??
+      membership.idSale ??
+      membership.id_sale
+    );
+    if (!externalId) continue;
+
+    const planName = str(membership.name) || "Plano Evolution";
+    const membershipType = str(membership.membershipType ?? membership.membership_type) || "";
+    const nextMonthValue = num(membership.valueNextMonth ?? membership.value_next_month);
+    const originalValue = num(membership.originalValue ?? membership.original_value);
+    const recurring = /recorr/i.test(`${planName} ${membershipType}`) || nextMonthValue > 0;
+
+    contracts.push({
+      externalId,
+      customerExternalId,
+      unit: branchName,
+      planName,
+      planType: membershipType || (recurring ? "RECORRENTE" : "ANUAL"),
+      startDate: dateOf(membership.startDate ?? membership.start_date) || new Date().toISOString(),
+      endDate: dateOf(membership.endDate ?? membership.end_date),
+      amountPaid: originalValue || nextMonthValue,
+      recurring,
+      status: membershipStatus(membership.membershipStatus ?? membership.membership_status),
+      paymentMethodId: undefined,
+      hasStoredCard: false
+    });
+  }
+  return contracts;
+}
+
 export class ActiveClientsEvoAdapter implements EvoAdapter {
   private readonly fallback = new HttpEvoAdapter();
+
   async findCustomerById(memberId: string) {
-    const raw = await activeClientsRaw();
-    const found = rows(raw).find(item => idOf(item) === memberId);
-    return found ? customerFrom(found) : null;
+    const raw = await memberProfileRaw(memberId);
+    return customerFromProfile(raw);
   }
+
   async listContracts(customerExternalId: string) {
-    const raw = await activeClientsRaw();
-    const found = rows(raw).find(item => idOf(item) === customerExternalId);
-    if (!found) return [];
-    const contracts: EvoContract[] = [];
-    collectContracts(found, customerExternalId, contracts);
-    const unique = new Map(contracts.map(contract => [contract.externalId, contract]));
-    return [...unique.values()];
+    const raw = await memberProfileRaw(customerExternalId);
+    return contractsFromProfile(raw, customerExternalId);
   }
+
   getContract(contractExternalId: string) { return this.fallback.getContract(contractExternalId); }
   cancelContract(contractExternalId: string, protocol: string): Promise<EvoCancelResult> { return this.fallback.cancelContract(contractExternalId, protocol); }
   removeStoredPaymentMethod(contractExternalId: string, customerExternalId: string, protocol: string): Promise<EvoPaymentMethodResult> { return this.fallback.removeStoredPaymentMethod(contractExternalId, customerExternalId, protocol); }
