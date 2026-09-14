@@ -102,7 +102,7 @@ function collectContracts(value: unknown, fallbackCustomerId: string, out: EvoCo
   }
   for (const nested of Object.values(data)) collectContracts(nested, fallbackCustomerId, out, depth + 1);
 }
-function authHeaders() {
+function authHeaders(): Record<string, string> {
   const token = process.env.EVO_API_TOKEN?.trim();
   const username = process.env.EVO_API_USERNAME?.trim();
   if (!token) throw new Error("EVO_API_TOKEN_NOT_CONFIGURED");
