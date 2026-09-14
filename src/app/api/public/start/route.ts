@@ -30,6 +30,13 @@ function publicIntegrationError(error: unknown) {
   if (message.includes("EVO_HTTP_404")) {
     return { status: 502, error: "A rota configurada da API EVO não foi encontrada. Código EVO-404." };
   }
+  if (message.includes("EVO_HTTP_429")) {
+    return { status: 503, error: "A API EVO limitou temporariamente as consultas. Aguarde alguns instantes. Código EVO-429." };
+  }
+  const upstream = message.match(/EVO_HTTP_(5\d\d)/);
+  if (upstream) {
+    return { status: 503, error: `A API EVO respondeu com instabilidade temporária (${upstream[1]}). Tente novamente em instantes. Código EVO-${upstream[1]}.` };
+  }
   if (message.includes("EVO_RESPONSE_TOO_LARGE")) {
     return { status: 502, error: "O EVO retornou um volume de dados maior que o limite atual. Código EVO-SIZE." };
   }
