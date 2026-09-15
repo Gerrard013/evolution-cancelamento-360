@@ -19,6 +19,7 @@ function date(value?:string|null){if(!value)return "—";const d=new Date(value)
 
 export default function AdminTools() {
   const [memberId, setMemberId] = useState("");
+  const [searchUnit,setSearchUnit]=useState<"Condor"|"Umarizal">("Condor");
   const [customerName,setCustomerName]=useState("");
   const [contracts, setContracts] = useState<SyncedContract[]>([]);
   const [message, setMessage] = useState("");
@@ -29,17 +30,18 @@ export default function AdminTools() {
   async function sync() {
     setMessage(""); setContracts([]); setManualMode(false); setLoading(true);
     try {
-      const r = await fetch("/api/admin/evo/sync", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ memberId }) });
+      const r = await fetch("/api/admin/evo/sync", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ memberId, unit: searchUnit }) });
       const data = await r.json();
       if (r.status===409) {
         setManualMode(true);
+        setManual(current=>({...current,unit:searchUnit}));
         setMessage("Integração EVO ainda não está em leitura. Cadastre os dados abaixo somente como contingência.");
         return;
       }
-      if (!r.ok) throw new Error(data.code ? `${data.error} (${data.code})` : data.error || "Não foi possível localizar o aluno");
+      if (!r.ok) throw new Error(data.error || "Não foi possível localizar o aluno");
       setCustomerName(data.customer.displayName);
       setContracts(data.contracts || []);
-      setMessage(`Aluno localizado no EVO: ${data.customer.displayName}. Confira o contrato antes de continuar.`);
+      setMessage(`Aluno localizado no EVO (${searchUnit}): ${data.customer.displayName}. Confira o contrato antes de continuar.`);
     } catch (e) { setMessage(e instanceof Error ? e.message : "Falha"); }
     finally { setLoading(false); }
   }
@@ -72,8 +74,8 @@ export default function AdminTools() {
 
   return (
     <section className="admin-tools glass operational-card">
-      <div className="section-title"><div><p className="eyebrow">CONSULTA EVO / W12</p><h2>Localizar aluno pela matrícula EVO</h2><p className="section-help">Consulte o cadastro e veja plano, unidade, vigência e valor antes de abrir o atendimento.</p></div><button onClick={logout}>Sair</button></div>
-      <div className="tool-row"><input inputMode="numeric" value={memberId} onChange={e=>setMemberId(e.target.value.replace(/[^0-9A-Za-z._-]/g,""))} placeholder="Matrícula EVO" autoComplete="off"/><button className="btn primary" disabled={loading||!memberId.trim()} onClick={sync}>{loading?"Consultando EVO...":"Buscar no EVO"}</button></div>
+      <div className="section-title"><div><p className="eyebrow">CONSULTA EVO / W12</p><h2>Localizar aluno pela matrícula EVO</h2><p className="section-help">Selecione a unidade correta antes da consulta para usar somente a credencial EVO daquela unidade.</p></div><button onClick={logout}>Sair</button></div>
+      <div className="tool-row"><select value={searchUnit} onChange={e=>setSearchUnit(e.target.value as "Condor"|"Umarizal")} aria-label="Unidade EVO"><option value="Condor">Condor</option><option value="Umarizal">Umarizal</option></select><input inputMode="numeric" value={memberId} onChange={e=>setMemberId(e.target.value.replace(/[^0-9A-Za-z._-]/g,""))} placeholder="Matrícula EVO" autoComplete="off"/><button className="btn primary" disabled={loading||!memberId.trim()} onClick={sync}>{loading?"Consultando EVO...":"Buscar no EVO"}</button></div>
 
       {manualMode&&<div className="manual-entry"><div className="manual-head"><b>Contingência manual</b><span>Use somente se a integração estiver indisponível.</span></div><div className="form-grid">
         <label>Nome do aluno<input value={manual.displayName} onChange={e=>setManual({...manual,displayName:e.target.value})} placeholder="Nome completo"/></label>
