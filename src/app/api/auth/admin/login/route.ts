@@ -14,6 +14,11 @@ const schema = z.object({
   code: z.string().trim().regex(/^\d{6}$/).optional().or(z.literal(""))
 });
 
+function ownerSessionVersion() {
+  const value = Number(process.env.OWNER_SESSION_VERSION || 1);
+  return Number.isInteger(value) && value > 0 ? value : 1;
+}
+
 function ownerAccount() {
   const username = process.env.OWNER_USERNAME?.trim().toLowerCase();
   const passwordHash = process.env.OWNER_PASSWORD_HASH?.trim();
@@ -45,7 +50,7 @@ export async function POST(req: Request) {
         return Response.json({ error: "Informe o código de autenticação.", mfaRequired: true }, { status: 428 });
       }
       const ttl = 4 * 60 * 60;
-      const token = createSessionToken({ kind: "admin", sub: `owner:${owner.username}`, role: "OWNER" }, ttl);
+      const token = createSessionToken({ kind: "admin", sub: `owner:${owner.username}`, role: "OWNER", sv: ownerSessionVersion() }, ttl);
       const jar = await cookies();
       jar.set(ADMIN_COOKIE, token, secureCookieOptions(ttl));
       return Response.json({ ok: true, name: owner.name, role: "OWNER" });
@@ -76,7 +81,7 @@ export async function POST(req: Request) {
   } catch (error) {
     if (error instanceof Response) return error;
     if (error instanceof z.ZodError) return Response.json({ error: "Dados inválidos" }, { status: 400 });
-    console.error("[ADMIN_LOGIN]", error);
+    console.error("[ADMIN_LOGIN]", error instanceof Error ? error.message : "LOGIN_ERROR");
     return Response.json({ error: "Falha de autenticação" }, { status: 500 });
   }
 }
