@@ -38,21 +38,22 @@ enum UserRole {
 }
 
 model User {
-  id             String   @id @default(cuid())
-  name           String
-  email          String   @unique
-  username       String?  @unique
-  passwordHash   String?
-  role           UserRole
-  unit           String?
-  active         Boolean  @default(true)
-  sessionVersion Int      @default(1)
-  createdBy      String?
-  lastLoginAt    DateTime?
-  disabledAt     DateTime?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-  events         AuditEvent[]
+  id                   String   @id @default(cuid())
+  name                 String
+  email                String   @unique
+  username             String?  @unique
+  passwordHash         String?
+  totpSecretCiphertext String?
+  role                 UserRole
+  unit                 String?
+  active               Boolean  @default(true)
+  sessionVersion       Int      @default(1)
+  createdBy            String?
+  lastLoginAt          DateTime?
+  disabledAt           DateTime?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  events               AuditEvent[]
 
   @@index([active, role])
 }
