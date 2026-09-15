@@ -22,16 +22,19 @@ export async function syncMemberFromEvo(memberId: string) {
   const contracts = await evo.listContracts(customer.externalId);
 
   const customerHash = hmac(customer.externalId, "EXTERNAL_ID_PEPPER");
+  const cpfCiphertext = customer.cpf ? encryptText(customer.cpf) : undefined;
   const savedCustomer = await prisma.customer.upsert({
     where: { externalIdHash: customerHash },
     create: {
       externalIdHash: customerHash,
       externalIdCiphertext: encryptText(customer.externalId),
+      cpfCiphertext,
       displayName: customer.name,
       contactHint: customer.contactHint || null
     },
     update: {
       externalIdCiphertext: encryptText(customer.externalId),
+      ...(cpfCiphertext ? { cpfCiphertext } : {}),
       displayName: customer.name,
       contactHint: customer.contactHint || null
     }
