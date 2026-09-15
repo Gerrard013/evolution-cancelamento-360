@@ -2,7 +2,7 @@ import { prisma } from "@/lib/db/prisma";
 
 const ANNUAL_ADVANCE_RATE = 0.144;
 const ANNUAL_CONTRACT_RATE = 0.10;
-export const RECURRING_EARLY_CANCEL_FEE = 258;
+export const RECURRING_CANCEL_FEE = 258;
 
 function round(value: number) {
   return Math.round((value + Number.EPSILON) * 100) / 100;
@@ -12,12 +12,6 @@ function calendarMonthsUsedInclusive(start: Date, at: Date) {
   if (at < start) return 0;
   const diff = (at.getUTCFullYear() - start.getUTCFullYear()) * 12 + (at.getUTCMonth() - start.getUTCMonth());
   return Math.min(12, Math.max(1, diff + 1));
-}
-
-function anniversaryOneYear(start: Date) {
-  const d = new Date(start);
-  d.setUTCFullYear(d.getUTCFullYear() + 1);
-  return d;
 }
 
 export async function ensureAnnualOperationalRule() {
@@ -56,18 +50,14 @@ export async function previewForContract(contractId: string, desiredDate: Date) 
 
   const looksRecurring = contract.recurring || /recorr/i.test(`${contract.planType} ${contract.planName}`);
   if (looksRecurring) {
-    const anniversary = anniversaryOneYear(contract.startDate);
-    const feeRequired = desiredDate < anniversary;
     return {
       kind: "RECURRING" as const,
       eligible: false as const,
       refund: 0,
-      feeRequired,
-      feeAmount: feeRequired ? RECURRING_EARLY_CANCEL_FEE : 0,
-      oneYearDate: anniversary.toISOString(),
-      reason: feeRequired
-        ? "Plano recorrente não possui estorno. Como o cancelamento ocorre antes de completar 12 meses, há taxa de cancelamento de R$ 258,00."
-        : "Plano recorrente não possui estorno. O contrato já completou 12 meses e não há taxa de cancelamento antecipado."
+      feeRequired: true,
+      feeAmount: RECURRING_CANCEL_FEE,
+      noticeDays: 30,
+      reason: "Plano anual recorrente: o termo oficial prevê multa fixa de R$ 258,00 e solicitação com 30 dias de antecedência da próxima mensalidade. A equipe fará a validação final no EVO antes do cancelamento."
     };
   }
 
