@@ -20,7 +20,7 @@
   "dependencies": {
     "@prisma/client": "^6.14.0",
     "next": "^15.4.6",
-    "nodemailer": "^6.9.16",
+    "nodemailer": "10.0.10",
     "pdf-lib": "^1.17.1",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
@@ -33,5 +33,9 @@
     "@types/react-dom": "^19.1.7",
     "prisma": "^6.14.0",
     "typescript": "^5.9.2"
+  },
+  "overrides": {
+    "postcss": "8.5.23",
+    "deepmerge-ts": "8.0.0"
   }
 }
