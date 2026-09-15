@@ -3,17 +3,18 @@ import { prisma } from "@/lib/db/prisma";
 import { getCustomerSession } from "@/lib/security/session";
 import { assertTrustedOrigin, readJsonLimited, requestFingerprint } from "@/lib/security/request";
 import { configuredLimit, enforceRateLimit } from "@/lib/security/rate-limit";
+import { enforcePersistentRateLimit } from "@/lib/security/persistent-rate-limit";
 import { previewForContract } from "@/lib/domain/refund-service";
 import { newProtocol } from "@/lib/domain/protocol";
 import { encryptText } from "@/lib/security/crypto";
 
 const PRIVACY_VERSION = "EVOLUTION-PRIVACIDADE-2026.09-v1";
+const TERM_VERSION = "EV-CAN-2026.09-v7";
 
 const schema = z.object({
   reasonCode: z.enum(["MUDANCA", "FINANCEIRO", "SAUDE", "HORARIO", "ATENDIMENTO", "OUTRO"]),
   reasonDetails: z.string().trim().max(1000).optional(),
   desiredDate: z.coerce.date(),
-  termVersion: z.string().trim().min(3).max(80),
   accepted: z.literal(true),
   privacyAccepted: z.literal(true),
   requesterAddress: z.string().trim().min(8).max(240),
@@ -27,6 +28,7 @@ export async function POST(req: Request) {
     enforceRateLimit(req, "cancel-draft", Math.min(configuredLimit("RATE_LIMIT_PUBLIC_PER_10_MIN", 20), 8), 10 * 60_000);
     const session = await getCustomerSession();
     if (!session) return Response.json({ error: "Sua sessão expirou. Volte ao início e confirme seus dados novamente." }, { status: 401 });
+    await enforcePersistentRateLimit("cancel-draft", session.sub, 8, 10 * 60_000);
     const input = schema.parse(await readJsonLimited(req, 24_000));
 
     if (session.sub === "demo-contract") {
@@ -58,7 +60,7 @@ export async function POST(req: Request) {
           desiredDate: input.desiredDate,
           status: "AWAITING_SIGNATURE",
           slaDueAt: new Date(Date.now() + slaHours * 60 * 60 * 1000),
-          termVersion: input.termVersion,
+          termVersion: TERM_VERSION,
           termAcceptedAt: now,
           termGeneratedAt: now,
           requesterAddressCiphertext: encryptText(input.requesterAddress),
@@ -90,7 +92,7 @@ export async function POST(req: Request) {
           action: "PUBLIC_TERM_GENERATED",
           entity: "CancellationRequest",
           entityId: request.id,
-          after: { protocol, status: request.status, termVersion: input.termVersion, privacyConsentVersion: PRIVACY_VERSION, privacyAccepted: true },
+          after: { protocol, status: request.status, termVersion: TERM_VERSION, privacyConsentVersion: PRIVACY_VERSION, privacyAccepted: true },
           ...fingerprint
         }
       });
