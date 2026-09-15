@@ -15,10 +15,7 @@ function annual(total,start,at){
   const estimatedRefund=round(Math.max(0,unusedBalance-advanceDeduction-contractFee));
   return {monthsUsed,monthsRemaining,monthlyReference,unusedBalance,advanceDeduction,contractFee,estimatedRefund};
 }
-function recurringFee(start,at){
-  const anniversary=new Date(start); anniversary.setUTCFullYear(anniversary.getUTCFullYear()+1);
-  return new Date(at)<anniversary?258:0;
-}
+function recurringFee(){ return 258; }
 function assertEqual(actual,expected,label){if(actual!==expected)throw new Error(`${label}: esperado ${expected}, recebido ${actual}`)}
 
 const example=annual(1200,"2025-12-30T00:00:00.000Z","2026-09-13T00:00:00.000Z");
@@ -29,7 +26,7 @@ assertEqual(example.unusedBalance,200,"saldo restante");
 assertEqual(example.advanceDeduction,172.8,"14,4% do total");
 assertEqual(example.contractFee,120,"10% do total");
 assertEqual(example.estimatedRefund,0,"estorno final");
-assertEqual(recurringFee("2025-12-30T00:00:00.000Z","2026-09-13T00:00:00.000Z"),258,"taxa recorrente antes de 12 meses");
-assertEqual(recurringFee("2025-12-30T00:00:00.000Z","2026-12-30T00:00:00.000Z"),0,"taxa recorrente com 12 meses");
+assertEqual(recurringFee(),258,"taxa fixa do plano anual recorrente");
+assertEqual(recurringFee(),258,"taxa fixa permanece conforme termo oficial, independentemente do tempo transcorrido");
 console.log("Business rule check passed.");
 console.log(JSON.stringify(example,null,2));
