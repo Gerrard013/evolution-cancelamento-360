@@ -4,6 +4,14 @@ import { evoAdapter } from "@/lib/evo";
 
 const EXECUTABLE_STATUSES = ["READY_TO_CANCEL", "APPROVED", "MANUAL_REVIEW", "UNDER_REVIEW"] as const;
 
+function evoProfileFromMetadata(metadata: unknown, fallbackUnit: string) {
+  if (metadata && typeof metadata === "object" && !Array.isArray(metadata)) {
+    const profile = (metadata as Record<string, unknown>).evoProfile;
+    if (profile === "CONDOR" || profile === "UMARIZAL" || profile === "DEFAULT") return profile;
+  }
+  return fallbackUnit;
+}
+
 export async function executeCancellationInEvo(requestId: string) {
   const item = await prisma.cancellationRequest.findUnique({
     where: { id: requestId },
@@ -25,6 +33,7 @@ export async function executeCancellationInEvo(requestId: string) {
   });
   if (locked.count !== 1) throw new Error("EVO_CANCELLATION_ALREADY_IN_PROGRESS");
 
+  const evoProfile = evoProfileFromMetadata(item.contract.metadata, item.contract.unit);
   await prisma.auditEvent.create({
     data: {
       requestId: item.id,
@@ -32,13 +41,13 @@ export async function executeCancellationInEvo(requestId: string) {
       entity: "CancellationRequest",
       entityId: item.id,
       before: { status: item.status },
-      after: { status: "EVO_CANCEL_REQUESTED", unit: item.contract.unit }
+      after: { status: "EVO_CANCEL_REQUESTED", unit: item.contract.unit, evoProfile }
     }
   });
 
   const externalContractId = decryptText(item.contract.externalIdCiphertext);
   const externalCustomerId = item.contract.customer.externalIdCiphertext ? decryptText(item.contract.customer.externalIdCiphertext) : "";
-  const evo = evoAdapter(item.contract.unit);
+  const evo = evoAdapter(evoProfile);
   const result = await evo.cancelContract(externalContractId, item.protocol);
   if (result.status !== "cancelled") {
     await prisma.cancellationRequest.update({ where: { id: item.id }, data: { status: "UNDER_REVIEW", evoOperationId: result.operationId || null, evoLastAttemptAt: new Date() } });
@@ -82,7 +91,7 @@ export async function executeCancellationInEvo(requestId: string) {
         action: "EVO_CANCELLATION_CONFIRMED",
         entity: "CancellationRequest",
         entityId: item.id,
-        after: { status: finalStatus, operationId: result.operationId || null, paymentMethodRemovalStatus, refundAmount, unit: item.contract.unit }
+        after: { status: finalStatus, operationId: result.operationId || null, paymentMethodRemovalStatus, refundAmount, unit: item.contract.unit, evoProfile }
       }
     })
   ]);
