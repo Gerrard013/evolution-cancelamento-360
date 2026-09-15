@@ -6,12 +6,19 @@ type ContractOption = { id:string; unit:string; planName:string; startDate:strin
 type ProtocolResult = { protocol:string; status:string; statusLabel:string; createdAt:string; unit:string; planName:string; cancellationFee:number; cancellationFeePaid:boolean; estimatedRefund:number };
 type AuthStage = "credentials"|"otp"|"verified";
 
+function formatCpf(value:string) {
+  const digits=value.replace(/\D/g,"").slice(0,11);
+  return digits
+    .replace(/^(\d{3})(\d)/,"$1.$2")
+    .replace(/^(\d{3})\.(\d{3})(\d)/,"$1.$2.$3")
+    .replace(/\.(\d{3})(\d)/,".$1-$2");
+}
+
 export default function SelfServiceStart() {
   const [mode,setMode]=useState<"new"|"status">("new");
   const [authStage,setAuthStage]=useState<AuthStage>("credentials");
-  const [fullName,setFullName]=useState("");
+  const [cpf,setCpf]=useState("");
   const [birthDate,setBirthDate]=useState("");
-  const [email,setEmail]=useState("");
   const [challengeId,setChallengeId]=useState("");
   const [emailHint,setEmailHint]=useState("");
   const [code,setCode]=useState("");
@@ -45,12 +52,12 @@ export default function SelfServiceStart() {
       const r=await fetch("/api/public/start",{
         method:"POST",
         headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({fullName,birthDate,email})
+        body:JSON.stringify({cpf:cpf.replace(/\D/g,""),birthDate})
       });
       const d=await r.json().catch(()=>({}));
       if(!r.ok) throw new Error(d.error||"Não foi possível confirmar seus dados.");
       setChallengeId(d.challengeId||"");
-      setEmailHint(d.emailHint||email);
+      setEmailHint(d.emailHint||"e-mail cadastrado");
       setAuthStage("otp");
     } catch(e) {
       setError(e instanceof Error?e.message:"Não foi possível iniciar a validação.");
@@ -67,7 +74,7 @@ export default function SelfServiceStart() {
       });
       const d=await r.json().catch(()=>({}));
       if(!r.ok) throw new Error(d.error||"Código inválido.");
-      setName(d.customerName||fullName);
+      setName(d.customerName||"Cliente");
       setContracts(d.contracts||[]);
       setAuthStage("verified");
     } catch(e) {
@@ -104,14 +111,13 @@ export default function SelfServiceStart() {
     <div className="self-service-title">
       <span>ACESSO SEGURO</span>
       <h2>Confirme sua identidade</h2>
-      <p>Informe os mesmos dados cadastrados na Evolution. Não é necessário saber sua matrícula.</p>
+      <p>Informe seu CPF e sua data de nascimento exatamente como estão cadastrados na Evolution.</p>
     </div>
-    <label>Nome completo<input value={fullName} onChange={e=>setFullName(e.target.value)} placeholder="Seu nome completo" autoComplete="name" required/></label>
+    <label>CPF<input value={formatCpf(cpf)} onChange={e=>setCpf(e.target.value.replace(/\D/g,"").slice(0,11))} placeholder="000.000.000-00" inputMode="numeric" autoComplete="off" required/></label>
     <label>Data de nascimento<input type="date" value={birthDate} onChange={e=>setBirthDate(e.target.value)} autoComplete="bday" required/></label>
-    <label>E-mail cadastrado no EVO<input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="voce@email.com" autoComplete="email" required/></label>
     {error&&<div className="error-box">{error}</div>}
-    <button className="btn primary full" disabled={loading||!fullName.trim()||!birthDate||!email.trim()}>{loading?"Validando no EVO...":"Receber código por e-mail"}</button>
-    <small className="privacy-note">Os três dados precisam coincidir com o cadastro do EVO/W12. Depois enviaremos um código de uso único para o próprio e-mail confirmado.</small>
+    <button className="btn primary full" disabled={loading||cpf.length!==11||!birthDate}>{loading?"Validando no EVO...":"Receber código por e-mail"}</button>
+    <small className="privacy-note">O sistema consulta o cadastro no EVO/W12. Se CPF e nascimento coincidirem, o código será enviado somente para o e-mail já cadastrado no EVO. O e-mail não precisa ser digitado.</small>
   </form> : authStage==="otp" ? <form onSubmit={verifyIdentity}>
     <div className="self-service-title">
       <span>VERIFICAÇÃO EM 2 ETAPAS</span>
@@ -122,7 +128,7 @@ export default function SelfServiceStart() {
     {error&&<div className="error-box">{error}</div>}
     <button className="btn primary full" disabled={loading||code.length!==6}>{loading?"Confirmando...":"Confirmar identidade"}</button>
     <button type="button" className="btn secondary full" disabled={loading} onClick={resetAuth}>Corrigir meus dados</button>
-    <small className="privacy-note">O código é temporário, possui limite de tentativas e não substitui os dados cadastrados no EVO.</small>
+    <small className="privacy-note">O código é temporário, de uso único e possui limite de tentativas.</small>
   </form> : null;
 
   return <div className="self-service-card">
@@ -135,9 +141,9 @@ export default function SelfServiceStart() {
       <div className="self-service-title"><span>IDENTIDADE CONFIRMADA</span><h2>{name ? `Olá, ${name.split(" ")[0]}` : "Contratos encontrados"}</h2><p>Selecione o contrato que deseja cancelar.</p></div>
       <div className="public-contract-list">{contracts.map(c=><button key={c.id} onClick={()=>choose(c.id)} disabled={loading}><b>{c.planName}</b><span>{c.unit} • Início {new Date(c.startDate).toLocaleDateString("pt-BR")}</span></button>)}</div>
       {error&&<div className="error-box">{error}</div>}
-      <small className="privacy-note">A matrícula é obtida internamente pelo EVO/W12 e não precisa ser digitada pelo cliente.</small>
+      <small className="privacy-note">A matrícula e o e-mail são obtidos internamente pelo EVO/W12 e não precisam ser digitados pelo cliente.</small>
     </div> : <form onSubmit={checkProtocol}>
-      <div className="self-service-title"><span>IDENTIDADE CONFIRMADA</span><h2>Consulte seu protocolo</h2><p>Informe somente o protocolo. Sua identidade já foi validada pelo e-mail cadastrado.</p></div>
+      <div className="self-service-title"><span>IDENTIDADE CONFIRMADA</span><h2>Consulte seu protocolo</h2><p>Informe somente o protocolo. Sua identidade já foi validada com CPF, nascimento e código enviado ao e-mail cadastrado.</p></div>
       <label>Protocolo<input value={protocol} onChange={e=>setProtocol(e.target.value.toUpperCase())} placeholder="Ex.: EV-..." autoComplete="off" required/></label>
       {error&&<div className="error-box">{error}</div>}
       <button className="btn primary full" disabled={loading||!protocol}>{loading?"Consultando...":"Consultar"}</button>
