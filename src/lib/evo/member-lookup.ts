@@ -22,6 +22,17 @@ function objectOf(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
+function firstObject(raw: unknown): Record<string, unknown> {
+  if (Array.isArray(raw)) return objectOf(raw[0]);
+  const root = objectOf(raw);
+  for (const key of ["data", "item", "result", "member", "customer", "cliente", "aluno"]) {
+    const value = root[key];
+    if (Array.isArray(value)) return objectOf(value[0]);
+    if (value && typeof value === "object") return objectOf(value);
+  }
+  return root;
+}
+
 function str(value: unknown) {
   return typeof value === "string" || typeof value === "number" ? String(value).trim() : "";
 }
@@ -37,7 +48,11 @@ function normalizeDate(value: unknown) {
   return Number.isNaN(d.getTime()) ? undefined : d.toISOString().slice(0, 10);
 }
 
-function normalizeCpf(value: unknown) {
+function normalizeCpf(value: unknown): string | undefined {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const data = objectOf(value);
+    return normalizeCpf(data.value ?? data.number ?? data.document ?? data.cpf);
+  }
   const digits = str(value).replace(/\D/g, "");
   return digits.length === 11 ? digits : undefined;
 }
@@ -48,6 +63,12 @@ function memberArray(raw: unknown): Record<string, unknown>[] {
   for (const key of ["data", "items", "results", "members"]) {
     const value = root[key];
     if (Array.isArray(value)) return value.map(objectOf);
+    if (value && typeof value === "object") {
+      const nested = objectOf(value);
+      for (const nestedKey of ["items", "results", "members", "data"]) {
+        if (Array.isArray(nested[nestedKey])) return (nested[nestedKey] as unknown[]).map(objectOf);
+      }
+    }
   }
   return Object.keys(root).length ? [root] : [];
 }
@@ -68,10 +89,10 @@ async function evoGet(path: string, profile: EvoCredentialProfile, params?: Reco
   if (target.origin !== base.origin) throw new Error("EVO_SSRF_BLOCKED");
   for (const [key, value] of Object.entries(params || {})) target.searchParams.set(key, value);
 
-  const timeoutMs = Math.min(10000, Math.max(3000, Number(process.env.EVO_REQUEST_TIMEOUT_MS || 6500)));
+  const timeoutMs = Math.min(10_000, Math.max(3_000, Number(process.env.EVO_REQUEST_TIMEOUT_MS || 6_500)));
   console.info("[EVO_GET_BEGIN]", JSON.stringify({ profile: profile.key, path }));
 
-  const usage = await withHardTimeout(recordEvoHit(), 3000, "EVO_USAGE_TIMEOUT");
+  const usage = await withHardTimeout(recordEvoHit(), 3_000, "EVO_USAGE_TIMEOUT");
   if (usage.hitCount > usage.hardLimit) throw new Error("EVO_API_BUDGET_HARD_LIMIT");
 
   const controller = new AbortController();
@@ -89,21 +110,28 @@ async function evoGet(path: string, profile: EvoCredentialProfile, params?: Reco
     console.info("[EVO_GET_END]", JSON.stringify({ profile: profile.key, path, status: response.status }));
     if (!response.ok) throw new Error(`EVO_HTTP_${response.status}`);
     if (Buffer.byteLength(text, "utf8") > 2 * 1024 * 1024) throw new Error("EVO_RESPONSE_TOO_LARGE");
-    return text ? JSON.parse(text) : {};
+    try {
+      return text ? JSON.parse(text) : {};
+    } catch {
+      throw new Error("EVO_INVALID_JSON");
+    }
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") throw new Error("EVO_FETCH_TIMEOUT");
+    throw error;
   } finally {
     clearTimeout(timer);
   }
 }
 
 function mapProfile(raw: unknown, profile: EvoCredentialProfile): EvoMemberIdentity | null {
-  const data = objectOf(raw);
+  const data = firstObject(raw);
   const externalId = str(data.idMember ?? data.memberId ?? data.id_member ?? data.id);
   const email = str(data.email ?? data.emailAddress ?? data.memberEmail).toLowerCase();
   const firstName = str(data.firstName ?? data.first_name);
   const lastName = str(data.lastName ?? data.last_name);
-  const name = str(data.name ?? data.fullName ?? data.full_name) || `${firstName} ${lastName}`.trim() || "Cliente";
-  const birthDate = normalizeDate(data.birthDate ?? data.birth_date ?? data.dateOfBirth ?? data.dataNascimento);
-  const cpf = normalizeCpf(data.cpf ?? data.CPF ?? data.document ?? data.documentNumber ?? data.documentId ?? data.cpfCnpj);
+  const name = str(data.name ?? data.fullName ?? data.full_name ?? data.memberName) || `${firstName} ${lastName}`.trim() || "Cliente";
+  const birthDate = normalizeDate(data.birthDate ?? data.birth_date ?? data.dateOfBirth ?? data.dataNascimento ?? data.birthday ?? data.birthdate);
+  const cpf = normalizeCpf(data.cpf ?? data.CPF ?? data.document ?? data.documentNumber ?? data.documentId ?? data.cpfCnpj ?? data.cpf_cnpj ?? data.taxId);
   if (!externalId || !email) return null;
   return { externalId, email, name, birthDate, cpf, profileKey: profile.key };
 }
@@ -113,13 +141,13 @@ function basicCandidateId(data: Record<string, unknown>) {
 }
 
 function basicCandidateBirthDate(data: Record<string, unknown>) {
-  return normalizeDate(data.birthDate ?? data.birth_date ?? data.dateOfBirth ?? data.dataNascimento);
+  return normalizeDate(data.birthDate ?? data.birth_date ?? data.dateOfBirth ?? data.dataNascimento ?? data.birthday ?? data.birthdate);
 }
 
 async function findProfileFromBasic(profile: EvoCredentialProfile, filter: "document" | "email", value: string, expectedBirthDate?: string) {
   const raw = await evoGet("/api/v1/members/basic", profile, {
     [filter]: value,
-    take: "50",
+    take: "25",
     skip: "0"
   });
   const candidates = memberArray(raw);
@@ -141,10 +169,17 @@ async function findProfileFromBasic(profile: EvoCredentialProfile, filter: "docu
 
     const profileRaw = await evoGet(`/api/v1/members/${encodeURIComponent(id)}`, profile);
     const member = mapProfile(profileRaw, profile);
+    console.info("[EVO_PROFILE_LOOKUP]", JSON.stringify({
+      profile: profile.key,
+      mapped: Boolean(member),
+      hasBirthDate: Boolean(member?.birthDate || candidateBirthDate),
+      hasEmail: Boolean(member?.email)
+    }));
     if (!member) continue;
 
-    if (expectedBirthDate && member.birthDate !== expectedBirthDate) continue;
-    return member;
+    const verifiedBirthDate = member.birthDate || candidateBirthDate;
+    if (expectedBirthDate && verifiedBirthDate !== expectedBirthDate) continue;
+    return { ...member, birthDate: verifiedBirthDate };
   }
   return null;
 }
