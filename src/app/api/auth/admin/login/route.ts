@@ -36,18 +36,24 @@ export async function POST(req: Request) {
     const input = schema.parse(await readJsonLimited(req, 8_192));
     const username = input.username.trim().toLowerCase();
 
-    const databaseAccount = await prisma.user.findFirst({ where: { username, active: true } });
+    // A existência de um registro no banco prevalece sobre o bootstrap por env.
+    // Isso impede que um usuário revogado pelo OWNER seja reativado apenas porque
+    // ainda existe uma credencial inicial nas Variables do Railway.
+    const databaseAccount = await prisma.user.findFirst({ where: { username } });
     let account:{username:string;name:string;role:UserRole}|null=null;
-    if (databaseAccount?.passwordHash && verifyPassword(input.password, databaseAccount.passwordHash) && allowedRoles.has(databaseAccount.role)) {
-      account={username:databaseAccount.username || username,name:databaseAccount.name,role:databaseAccount.role};
-      await prisma.user.update({where:{id:databaseAccount.id},data:{lastLoginAt:new Date()}});
+
+    if (databaseAccount) {
+      if (!databaseAccount.active) return Response.json({ error: "Acesso revogado pelo proprietário." }, { status: 403 });
+      if (databaseAccount.passwordHash && verifyPassword(input.password, databaseAccount.passwordHash) && allowedRoles.has(databaseAccount.role)) {
+        account={username:databaseAccount.username || username,name:databaseAccount.name,role:databaseAccount.role};
+        await prisma.user.update({where:{id:databaseAccount.id},data:{lastLoginAt:new Date()}});
+      }
     } else {
+      // Bootstrap só acontece uma vez, na ausência total do usuário no banco.
       const envAccount = configuredAdmins().find(a => a.username === username);
       if (envAccount && verifyPassword(input.password, envAccount.passwordHash)) {
-        const persisted=await prisma.user.upsert({
-          where:{email:envAccount.email},
-          create:{name:envAccount.name,email:envAccount.email,username:envAccount.username,passwordHash:envAccount.passwordHash,role:envAccount.role,active:true,lastLoginAt:new Date()},
-          update:{name:envAccount.name,username:envAccount.username,passwordHash:envAccount.passwordHash,role:envAccount.role,active:true,lastLoginAt:new Date()}
+        const persisted=await prisma.user.create({
+          data:{name:envAccount.name,email:envAccount.email,username:envAccount.username,passwordHash:envAccount.passwordHash,role:envAccount.role,active:true,lastLoginAt:new Date(),createdBy:"ENV_BOOTSTRAP"}
         });
         account={username:persisted.username || envAccount.username,name:persisted.name,role:persisted.role};
       }
