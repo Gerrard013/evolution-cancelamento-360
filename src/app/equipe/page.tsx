@@ -24,6 +24,7 @@ function actorFrom(events: Array<{ action: string; after: unknown }>) {
 
 export default async function EquipePage() {
   const admin = await requireAdminPage();
+  const isOwner = admin.role === "OWNER";
   const rows = await prisma.cancellationRequest.findMany({
     orderBy: { createdAt: "desc" },
     take: 60,
@@ -39,6 +40,7 @@ export default async function EquipePage() {
 
   const open = rows.filter(r => !["COMPLETED", "REJECTED", "EVO_CANCELLED", "CANCELLED_BY_CUSTOMER"].includes(r.status)).length;
   const waitingSignature = rows.filter(r => r.status === "AWAITING_SIGNATURE").length;
+  const readyForOwner = rows.filter(r => ["READY_TO_CANCEL", "MANUAL_REVIEW", "UNDER_REVIEW", "SIGNED_RECEIVED"].includes(r.status)).length;
   const estimated = rows.reduce((sum, r) => sum + Number(r.calculations[0]?.estimatedRefund || 0), 0);
   const pendingRefundRows = rows.filter(r => r.status === "REFUND_PENDING" && Number(r.calculations[0]?.estimatedRefund || 0) > 0);
   const paidRefundRows = rows.filter(r => Boolean(r.refund));
@@ -49,17 +51,23 @@ export default async function EquipePage() {
     <main className="ops-shell simple-ops">
       <aside className="sidebar glass-dark simple-sidebar">
         <a href="/" className="ops-brand"><span className="brand-dot"/><b>EVOLUTION 360</b></a>
-        <div className="side-summary"><span>Central de cancelamentos</span><b>Condor • Umarizal</b><small>Protocolos, termos, taxas, cancelamentos e estornos.</small></div>
-        <nav><a className="active">Painel da equipe</a><a href="#financeiro">Financeiro / Estornos</a><a href="#solicitacoes">Solicitações</a></nav>
-        <div className="sidebar-foot"><small>ACESSO DA EQUIPE</small><b>Administrador</b><span>{admin.sub}</span></div>
+        <div className="side-summary"><span>Central de cancelamentos</span><b>Condor • Umarizal</b><small>Protocolos, termos, taxas, validação final e estornos.</small></div>
+        <nav>
+          <a className="active">Painel da equipe</a>
+          <a href="#financeiro">Financeiro / Estornos</a>
+          <a href="#solicitacoes">Solicitações</a>
+          {isOwner ? <a href="/equipe/seguranca">Segurança e acessos</a> : null}
+        </nav>
+        <div className="sidebar-foot"><small>{isOwner ? "ACESSO DO PROPRIETÁRIO" : "ACESSO DA EQUIPE"}</small><b>{isOwner ? "Ruy • OWNER" : admin.role}</b><span>{admin.sub}</span></div>
       </aside>
 
       <section className="ops-main">
-        <header className="ops-header"><div><p className="eyebrow">CENTRAL DA EQUIPE</p><h1>Cancelamentos</h1><p className="header-help">Acompanhe os pedidos enviados pelo portal e conclua somente as etapas que exigem ação da equipe.</p></div><div className="ops-user"><span>EV</span></div></header>
+        <header className="ops-header"><div><p className="eyebrow">CENTRAL DA EQUIPE</p><h1>Cancelamentos</h1><p className="header-help">O pedido só é cancelado no EVO depois da validação final do proprietário.</p></div><div className="ops-user"><span>EV</span></div></header>
 
         <div className="metric-grid compact-metrics">
           <article><small>EM ANDAMENTO</small><b>{open}</b><span>solicitações abertas</span></article>
           <article><small>AGUARDANDO ASSINATURA</small><b>{waitingSignature}</b><span>termos ainda não enviados</span></article>
+          <article><small>VALIDAÇÃO FINAL</small><b>{readyForOwner}</b><span>aguardando conferência do Ruy</span></article>
           <article><small>ESTORNO EM PRÉVIA</small><b>{money(estimated)}</b><span>valor estimado, sujeito à conferência</span></article>
         </div>
 
@@ -68,8 +76,8 @@ export default async function EquipePage() {
         <section className="finance-zone" id="financeiro">
           <div className="finance-card">
             <p className="eyebrow">CONTROLE FINANCEIRO</p>
-            <h2>Estornos sem dúvida e sem “olha na pasta”</h2>
-            <p>O painel registra automaticamente quem confirmou o pagamento, quando foi feito, valor, forma, referência e comprovante anexado ao protocolo.</p>
+            <h2>Estornos com rastreabilidade</h2>
+            <p>O painel registra quem confirmou o pagamento, quando foi feito, valor, forma, referência e comprovante vinculado ao protocolo.</p>
             <div className="finance-kpis">
               <div className="finance-kpi warn"><small>A PAGAR</small><b>{money(pendingRefundTotal)}</b><span>{pendingRefundRows.length} estorno(s) pendente(s)</span></div>
               <div className="finance-kpi good"><small>JÁ PAGO</small><b>{money(paidRefundTotal)}</b><span>{paidRefundRows.length} estorno(s) registrado(s)</span></div>
@@ -101,7 +109,7 @@ export default async function EquipePage() {
         </section>
 
         <section className="queue glass full-queue" id="solicitacoes">
-          <div className="section-title"><div><p className="eyebrow">SOLICITAÇÕES RECENTES</p><h2>Acompanhar pedidos</h2><p className="section-help">Pedidos recebidos pelo portal e atendimentos assistidos pela equipe.</p></div></div>
+          <div className="section-title"><div><p className="eyebrow">SOLICITAÇÕES RECENTES</p><h2>Acompanhar pedidos</h2><p className="section-help">O botão de cancelamento final aparece somente no acesso do proprietário.</p></div></div>
           <div className="queue-table friendly-table">
             <div className="tr th"><span>Protocolo</span><span>Aluno</span><span>Unidade / Plano</span><span>Status</span><span>Financeiro / Documentos</span><span>Ações</span></div>
             {rows.length === 0 ? <div className="empty-state">Nenhuma solicitação registrada ainda.</div> : rows.map((r) => {
@@ -122,7 +130,7 @@ export default async function EquipePage() {
                   {feeReceipt ? <a className="doc-link" href={`/api/admin/documents/${feeReceipt.id}`}>Comprovante da taxa</a> : null}
                   {refundReceipt ? <a className="doc-link" href={`/api/admin/documents/${refundReceipt.id}`}>Comprovante do estorno</a> : null}
                 </span>
-                <span><RequestActions id={r.id} status={r.status} fee={Number(r.cancellationFee)} estimatedRefund={amount || 0} refundRecorded={Boolean(r.refund)} hasRefundReceipt={Boolean(refundReceipt)} /></span>
+                <span><RequestActions id={r.id} status={r.status} fee={Number(r.cancellationFee)} estimatedRefund={amount || 0} refundRecorded={Boolean(r.refund)} hasRefundReceipt={Boolean(refundReceipt)} canFinalCancel={isOwner} /></span>
               </div>;
             })}
           </div>
