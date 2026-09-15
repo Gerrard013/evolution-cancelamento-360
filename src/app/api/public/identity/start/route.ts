@@ -11,7 +11,8 @@ import { sendIdentityCode } from "@/lib/email/smtp";
 const schema = z.object({
   cpf: z.string().trim().min(11).max(18),
   email: z.string().trim().email().max(200),
-  lgpdAccepted: z.literal(true)
+  lgpdAccepted: z.literal(true),
+  purpose: z.enum(["CANCELLATION", "PROTOCOL_STATUS"]).default("CANCELLATION")
 });
 
 function mappedEvoError(error: unknown) {
@@ -29,7 +30,7 @@ export async function POST(req: Request) {
     assertTrustedOrigin(req);
     enforceRateLimit(req, "identity-start", Math.min(configuredLimit("RATE_LIMIT_PUBLIC_PER_10_MIN", 20), 5), 10 * 60_000);
     if ((process.env.EVO_INTEGRATION_MODE || "manual") === "manual") {
-      return Response.json({ error: "O cancelamento online ainda não está disponível." }, { status: 503 });
+      return Response.json({ error: "O canal online ainda não está disponível." }, { status: 503 });
     }
 
     const input = schema.parse(await readJsonLimited(req, 8_192));
@@ -49,8 +50,7 @@ export async function POST(req: Request) {
       return Response.json({ error: "Não foi possível confirmar CPF e e-mail no cadastro do EVO." }, { status: 401 });
     }
 
-    const activeContracts = synced.contracts.filter(c => c.status === "ACTIVE");
-    if (!activeContracts.length) {
+    if (input.purpose === "CANCELLATION" && !synced.contracts.some(c => c.status === "ACTIVE")) {
       return Response.json({ error: "Não encontramos contrato ativo para cancelamento." }, { status: 404 });
     }
 
@@ -60,7 +60,7 @@ export async function POST(req: Request) {
       cpf,
       email: evoEmail,
       consentVersion,
-      purpose: "CANCELLATION"
+      purpose: input.purpose
     });
 
     try {
