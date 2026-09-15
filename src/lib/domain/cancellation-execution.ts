@@ -17,7 +17,8 @@ export async function executeCancellationInEvo(requestId: string) {
 
   const externalContractId = decryptText(item.contract.externalIdCiphertext);
   const externalCustomerId = item.contract.customer.externalIdCiphertext ? decryptText(item.contract.customer.externalIdCiphertext) : "";
-  const result = await evoAdapter().cancelContract(externalContractId, item.protocol);
+  const evo = evoAdapter(item.contract.unit);
+  const result = await evo.cancelContract(externalContractId, item.protocol);
   if (result.status !== "cancelled") {
     await prisma.cancellationRequest.update({ where: { id: item.id }, data: { status: "UNDER_REVIEW", evoOperationId: result.operationId || null, evoLastAttemptAt: new Date() } });
     return { status: "UNDER_REVIEW" as const, operationId: result.operationId || null, paymentMethodRemoved: false };
@@ -28,7 +29,7 @@ export async function executeCancellationInEvo(requestId: string) {
   if (item.contract.recurring && process.env.EVO_REMOVE_PAYMENT_METHOD_ENABLED === "true") {
     try {
       if (!externalCustomerId) throw new Error("CUSTOMER_EXTERNAL_ID_MISSING");
-      await evoAdapter().removeStoredPaymentMethod(externalContractId, externalCustomerId, item.protocol);
+      await evo.removeStoredPaymentMethod(externalContractId, externalCustomerId, item.protocol);
       paymentMethodRemovalStatus = "REMOVED";
       paymentMethodRemoved = true;
     } catch {
@@ -60,7 +61,7 @@ export async function executeCancellationInEvo(requestId: string) {
         action: "EVO_CANCELLATION_CONFIRMED",
         entity: "CancellationRequest",
         entityId: item.id,
-        after: { status: finalStatus, operationId: result.operationId || null, paymentMethodRemovalStatus, refundAmount }
+        after: { status: finalStatus, operationId: result.operationId || null, paymentMethodRemovalStatus, refundAmount, unit: item.contract.unit }
       }
     })
   ]);
