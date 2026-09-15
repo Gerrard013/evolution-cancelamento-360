@@ -19,6 +19,8 @@ const ownerUser = process.env.OWNER_USERNAME?.trim();
 const ownerHash = process.env.OWNER_PASSWORD_HASH?.trim();
 if (!ownerUser || !ownerHash) errors.push("Configure OWNER_USERNAME + OWNER_PASSWORD_HASH for final owner approval");
 if (process.env.NODE_ENV === "production" && !process.env.OWNER_TOTP_SECRET?.trim()) errors.push("OWNER_TOTP_SECRET is required in production");
+const ownerSessionVersion = Number(process.env.OWNER_SESSION_VERSION || 1);
+if (!Number.isInteger(ownerSessionVersion) || ownerSessionVersion < 1) errors.push("OWNER_SESSION_VERSION must be a positive integer");
 
 const admins = [1,2].filter(n => process.env[`ADMIN_${n}_USERNAME`]?.trim() && process.env[`ADMIN_${n}_PASSWORD_HASH`]?.trim());
 const legacyAdmin = Boolean(process.env.ADMIN_EMAIL?.trim() && process.env.ADMIN_PASSWORD_HASH?.trim());
