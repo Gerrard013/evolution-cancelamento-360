@@ -27,19 +27,29 @@ function pathFromEnv(name: string, params: Record<string, string>): string {
   });
 }
 
+function withHardTimeout<T>(promise: Promise<T>, timeoutMs: number, code: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<T>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(code)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
 async function evoFetch(path: string, init: RequestInit = {}, profileOrUnit?: string) {
   const base = baseUrl();
   const target = new URL(path, base);
   if (target.origin !== base.origin) throw new Error("EVO_SSRF_BLOCKED");
 
-  const usage = await recordEvoHit();
+  const usage = await withHardTimeout(recordEvoHit(), 3000, "EVO_USAGE_TIMEOUT");
   if (usage.hitCount > usage.hardLimit) throw new Error("EVO_API_BUDGET_HARD_LIMIT");
 
-  const timeoutMs = Number(process.env.EVO_REQUEST_TIMEOUT_MS || 8000);
+  const timeoutMs = Math.min(12000, Math.max(3000, Number(process.env.EVO_REQUEST_TIMEOUT_MS || 8000)));
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(target, {
+    const response = await withHardTimeout(fetch(target, {
       ...init,
       redirect: "error",
       cache: "no-store",
@@ -50,11 +60,16 @@ async function evoFetch(path: string, init: RequestInit = {}, profileOrUnit?: st
         ...evoAuthHeaders(profileOrUnit),
         ...(init.headers || {})
       }
-    });
-    const text = await response.text();
+    }), timeoutMs + 500, "EVO_FETCH_TIMEOUT");
+    const text = await withHardTimeout(response.text(), timeoutMs + 500, "EVO_BODY_TIMEOUT");
     if (Buffer.byteLength(text, "utf8") > MAX_RESPONSE_BYTES) throw new Error("EVO_RESPONSE_TOO_LARGE");
     if (!response.ok) throw new Error(`EVO_HTTP_${response.status}`);
-    return text ? JSON.parse(text) : {};
+    if (!text) return {};
+    try { return JSON.parse(text); }
+    catch { throw new Error("EVO_INVALID_JSON"); }
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") throw new Error("EVO_FETCH_TIMEOUT");
+    throw error;
   } finally {
     clearTimeout(timer);
   }
@@ -118,7 +133,7 @@ function mapCustomer(raw: unknown): EvoCustomer | null {
   const lastName = asString(pick(data, "lastName", "last_name")) || "";
   const name = asString(pick(data, "name", "nome", "fullName", "nomeCompleto")) || `${firstName} ${lastName}`.trim() || "Cliente";
   const phone = asString(pick(data, "phone", "telefone", "mobile", "celular", "phoneNumber"));
-  const email = asString(pick(data, "email"))?.trim().toLowerCase();
+  const email = asString(pick(data, "email", "emailAddress", "memberEmail"))?.trim().toLowerCase();
   const birthDate = normalizeDateString(pick(data, "birthDate", "dateOfBirth", "dataNascimento", "birth_date", "birthday", "data_nascimento"));
   const cpfRaw = asString(pick(data, "cpf", "CPF", "document", "documentNumber", "cpfCnpj"));
   const cpf = cpfRaw?.replace(/\D/g, "") || undefined;
@@ -230,7 +245,7 @@ export class HttpEvoAdapter implements EvoAdapter {
       headers: { "Idempotency-Key": protocol },
       body
     }, this.profileOrUnit);
-    const data = obj(raw);
+    const data = firstPayloadObject(raw);
     return {
       operationId: asString(pick(data, "operationId", "id", "requestId", "protocol")),
       status: String(pick(data, "status", "situacao") || "accepted").toLowerCase().includes("cancel") ? "cancelled" : "accepted",
@@ -250,7 +265,7 @@ export class HttpEvoAdapter implements EvoAdapter {
       headers: { "Idempotency-Key": `${protocol}-payment-method` },
       body: method === "PUT" ? JSON.stringify({ active: false, removeCard: true, protocol }) : undefined
     }, this.profileOrUnit);
-    const data = obj(raw);
+    const data = firstPayloadObject(raw);
     return { removed: true, operationId: asString(pick(data, "operationId", "id", "requestId")) };
   }
 }
