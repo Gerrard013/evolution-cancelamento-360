@@ -77,12 +77,13 @@ export async function POST(req: Request) {
     const code = String(crypto.randomInt(100000, 1000000));
     const ttlMinutes = Math.min(20, Math.max(3, Number(process.env.OTP_TTL_MINUTES || 10)));
     const normalizedMemberName = normalizeName(member.name || "CLIENTE");
+    const memberRef = JSON.stringify({ memberId: member.externalId, profileKey: member.profileKey });
 
     await prisma.identityChallenge.deleteMany({ where: { expiresAt: { lt: new Date() } } }).catch(() => undefined);
 
     const challenge = await prisma.identityChallenge.create({
       data: {
-        externalMemberIdCiphertext: encryptText(member.externalId),
+        externalMemberIdCiphertext: encryptText(memberRef),
         nameHash: hmac(`name:${normalizedMemberName}`, "IDENTITY_CODE_PEPPER"),
         birthDateHash: hmac(`birth:${input.birthDate}`, "IDENTITY_CODE_PEPPER"),
         emailHash: hmac(`email:${email}`, "IDENTITY_CODE_PEPPER"),
