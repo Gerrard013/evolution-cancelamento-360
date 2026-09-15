@@ -14,7 +14,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
       - run: npm install --no-audit --no-fund
       - run: npm run security:check
       - run: npm run typecheck
@@ -26,6 +25,7 @@ jobs:
           SESSION_SECRET: build-only-secret-build-only-secret-1234567890
           PUBLIC_ID_PEPPER: build-only-public-id-pepper
           EXTERNAL_ID_PEPPER: build-only-external-id-pepper
+          IDENTITY_CODE_PEPPER: build-only-identity-code-pepper
           IP_HASH_PEPPER: build-only-ip-pepper
           APP_DATA_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
           NEXT_PUBLIC_DEMO_MODE: "false"
