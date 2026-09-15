@@ -51,8 +51,12 @@ export async function POST(req: Request) {
       return Response.json({ ok: true, name: owner.name, role: "OWNER" });
     }
 
-    const user = await prisma.user.findUnique({ where: { username } });
-    if (!user || !user.active || !user.passwordHash || user.role === "OWNER" || !verifyPassword(input.password, user.passwordHash)) {
+    const users = await prisma.user.findMany({ where: { username }, take: 2 });
+    if (users.length !== 1) {
+      return Response.json({ error: "Usuário ou senha inválidos" }, { status: 401 });
+    }
+    const user = users[0];
+    if (!user.active || !user.passwordHash || user.role === "OWNER" || !verifyPassword(input.password, user.passwordHash)) {
       return Response.json({ error: "Usuário ou senha inválidos" }, { status: 401 });
     }
 
