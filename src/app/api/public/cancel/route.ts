@@ -5,6 +5,9 @@ import { assertTrustedOrigin, readJsonLimited, requestFingerprint } from "@/lib/
 import { configuredLimit, enforceRateLimit } from "@/lib/security/rate-limit";
 import { previewForContract } from "@/lib/domain/refund-service";
 import { newProtocol } from "@/lib/domain/protocol";
+import { encryptText } from "@/lib/security/crypto";
+
+const PRIVACY_VERSION = "EVOLUTION-PRIVACIDADE-2026.09-v1";
 
 const schema = z.object({
   reasonCode: z.enum(["MUDANCA", "FINANCEIRO", "SAUDE", "HORARIO", "ATENDIMENTO", "OUTRO"]),
@@ -12,8 +15,9 @@ const schema = z.object({
   desiredDate: z.coerce.date(),
   termVersion: z.string().trim().min(3).max(80),
   accepted: z.literal(true),
-  requesterAddress: z.string().trim().max(240).optional(),
-  contactEmail: z.string().trim().email().max(200).optional().or(z.literal("")),
+  privacyAccepted: z.literal(true),
+  requesterAddress: z.string().trim().min(8).max(240),
+  requesterRg: z.string().trim().min(3).max(40),
   pixKey: z.string().trim().max(180).optional()
 });
 
@@ -39,6 +43,7 @@ export async function POST(req: Request) {
     const protocol = newProtocol();
     const fingerprint = requestFingerprint(req);
     const slaHours = Math.min(168, Math.max(1, Number(process.env.DEFAULT_SLA_HOURS || 48)));
+    const now = new Date();
 
     const created = await prisma.$transaction(async (tx) => {
       const request = await tx.cancellationRequest.create({
@@ -54,11 +59,14 @@ export async function POST(req: Request) {
           status: "AWAITING_SIGNATURE",
           slaDueAt: new Date(Date.now() + slaHours * 60 * 60 * 1000),
           termVersion: input.termVersion,
-          termAcceptedAt: new Date(),
-          termGeneratedAt: new Date(),
-          requesterAddress: input.requesterAddress || null,
-          contactEmail: input.contactEmail || null,
-          pixKey: input.pixKey || null,
+          termAcceptedAt: now,
+          termGeneratedAt: now,
+          requesterAddressCiphertext: encryptText(input.requesterAddress),
+          requesterRgCiphertext: encryptText(input.requesterRg),
+          contactEmailCiphertext: contract.customer.emailCiphertext || null,
+          pixKeyCiphertext: input.pixKey ? encryptText(input.pixKey) : null,
+          privacyConsentVersion: PRIVACY_VERSION,
+          privacyConsentAt: now,
           cancellationFee: preview?.kind === "RECURRING" && preview.feeRequired ? preview.feeAmount : 0
         }
       });
@@ -76,14 +84,23 @@ export async function POST(req: Request) {
           }
         });
       }
-      await tx.auditEvent.create({ data: { requestId: request.id, action: "PUBLIC_TERM_GENERATED", entity: "CancellationRequest", entityId: request.id, after: { protocol, status: request.status, termVersion: input.termVersion }, ...fingerprint } });
+      await tx.auditEvent.create({
+        data: {
+          requestId: request.id,
+          action: "PUBLIC_TERM_GENERATED",
+          entity: "CancellationRequest",
+          entityId: request.id,
+          after: { protocol, status: request.status, termVersion: input.termVersion, privacyConsentVersion: PRIVACY_VERSION, privacyAccepted: true },
+          ...fingerprint
+        }
+      });
       return request;
     });
 
     return Response.json({ protocol, status: created.status, termUrl: `/api/public/term/${encodeURIComponent(protocol)}`, message: "Termo gerado. Baixe, assine e envie o arquivo assinado para concluir." }, { status: 201 });
   } catch (error) {
     if (error instanceof Response) return error;
-    if (error instanceof z.ZodError) return Response.json({ error: "Confira os dados do pedido antes de continuar." }, { status: 400 });
+    if (error instanceof z.ZodError) return Response.json({ error: "Confira os dados do pedido, RG, endereço e aceite de privacidade antes de continuar." }, { status: 400 });
     return Response.json({ error: "Não foi possível gerar o termo de cancelamento" }, { status: 500 });
   }
 }
