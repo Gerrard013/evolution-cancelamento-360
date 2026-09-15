@@ -4,10 +4,18 @@ import { getAdminSession, type SessionPayload } from "@/lib/security/session";
 
 const OPERATIONAL_ROLES = new Set(["OWNER", "ADMIN", "MANAGER", "FINANCE", "ANALYST", "ATTENDANCE", "AUDITOR"]);
 
+function ownerSessionVersion() {
+  const value = Number(process.env.OWNER_SESSION_VERSION || 1);
+  return Number.isInteger(value) && value > 0 ? value : 1;
+}
+
 async function validateStaffSession(session: SessionPayload | null) {
   if (!session || !session.role || !OPERATIONAL_ROLES.has(session.role)) return null;
 
-  if (session.role === "OWNER" && session.sub.startsWith("owner:")) return session;
+  if (session.role === "OWNER" && session.sub.startsWith("owner:")) {
+    if (session.sv !== ownerSessionVersion()) return null;
+    return session;
+  }
 
   if (!session.sub.startsWith("user:")) return null;
   const id = session.sub.slice(5);
