@@ -36,20 +36,20 @@ export async function POST(req: Request) {
     const input = schema.parse(await readJsonLimited(req, 8_192));
     const username = input.username.trim().toLowerCase();
 
-    const databaseAccount = await prisma.user.findFirst({ where: { username, active: true } }).catch(() => null);
+    const databaseAccount = await prisma.user.findFirst({ where: { username, active: true } });
     let account:{username:string;name:string;role:UserRole}|null=null;
     if (databaseAccount?.passwordHash && verifyPassword(input.password, databaseAccount.passwordHash) && allowedRoles.has(databaseAccount.role)) {
       account={username:databaseAccount.username || username,name:databaseAccount.name,role:databaseAccount.role};
-      await prisma.user.update({where:{id:databaseAccount.id},data:{lastLoginAt:new Date()}}).catch(()=>null);
+      await prisma.user.update({where:{id:databaseAccount.id},data:{lastLoginAt:new Date()}});
     } else {
       const envAccount = configuredAdmins().find(a => a.username === username);
       if (envAccount && verifyPassword(input.password, envAccount.passwordHash)) {
-        account={username:envAccount.username,name:envAccount.name,role:envAccount.role};
-        await prisma.user.upsert({
+        const persisted=await prisma.user.upsert({
           where:{email:envAccount.email},
           create:{name:envAccount.name,email:envAccount.email,username:envAccount.username,passwordHash:envAccount.passwordHash,role:envAccount.role,active:true,lastLoginAt:new Date()},
           update:{name:envAccount.name,username:envAccount.username,passwordHash:envAccount.passwordHash,role:envAccount.role,active:true,lastLoginAt:new Date()}
-        }).catch(()=>null);
+        });
+        account={username:persisted.username || envAccount.username,name:persisted.name,role:persisted.role};
       }
     }
 
