@@ -37,12 +37,18 @@ function normalizeDate(value: unknown) {
   if (!raw) return undefined;
   const br = raw.match(/^(\d{2})[\/-](\d{2})[\/-](\d{4})$/);
   if (br) return `${br[3]}-${br[2]}-${br[1]}`;
+  const isoPrefix = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoPrefix) return `${isoPrefix[1]}-${isoPrefix[2]}-${isoPrefix[3]}`;
   const d = new Date(raw);
   if (Number.isNaN(d.getTime())) return undefined;
   return d.toISOString().slice(0, 10);
 }
 
 function normalizeCpf(value: unknown) {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const data = objectOf(value);
+    return normalizeCpf(data.value ?? data.number ?? data.document ?? data.cpf);
+  }
   const digits = str(value).replace(/\D/g, "");
   return digits.length === 11 ? digits : undefined;
 }
@@ -67,12 +73,16 @@ function memberArray(raw: unknown): Record<string, unknown>[] {
 
 function mapMember(data: Record<string, unknown>, profile: EvoCredentialProfile): EvoMemberIdentity | null {
   const externalId = str(data.idMember ?? data.memberId ?? data.id_member ?? data.id);
-  const email = str(data.email).toLowerCase();
+  const email = str(data.email ?? data.emailAddress ?? data.memberEmail).toLowerCase();
   const firstName = str(data.firstName ?? data.first_name);
   const lastName = str(data.lastName ?? data.last_name);
-  const name = str(data.name ?? data.fullName ?? data.full_name) || `${firstName} ${lastName}`.trim() || "Cliente";
-  const birthDate = normalizeDate(data.birthDate ?? data.birth_date ?? data.dateOfBirth ?? data.dataNascimento);
-  const cpf = normalizeCpf(data.cpf ?? data.CPF ?? data.document ?? data.documentNumber ?? data.cpfCnpj);
+  const name = str(data.name ?? data.fullName ?? data.full_name ?? data.memberName) || `${firstName} ${lastName}`.trim() || "Cliente";
+  const birthDate = normalizeDate(
+    data.birthDate ?? data.birth_date ?? data.dateOfBirth ?? data.dataNascimento ?? data.birthday ?? data.birthdate ?? data.date_birth
+  );
+  const cpf = normalizeCpf(
+    data.cpf ?? data.CPF ?? data.document ?? data.documentNumber ?? data.documentId ?? data.cpfCnpj ?? data.cpf_cnpj ?? data.taxId
+  );
   if (!externalId || !email) return null;
   return { externalId, email, name, birthDate, cpf, profileKey: profile.key };
 }
@@ -84,6 +94,7 @@ async function queryMember(queryParam: string, queryValue: string, profile: EvoC
   const target = new URL(membersPath(), base);
   if (target.origin !== base.origin) throw new Error("EVO_SSRF_BLOCKED");
   target.searchParams.set(queryParam, queryValue);
+  target.searchParams.set("take", "25");
 
   const usage = await recordEvoHit();
   if (usage.hitCount > usage.hardLimit) throw new Error("EVO_API_BUDGET_HARD_LIMIT");
@@ -116,6 +127,14 @@ async function queryAcrossProfiles(queryParam: string, queryValue: string, predi
     try {
       const candidates = await queryMember(queryParam, queryValue, profile);
       const match = candidates.find(predicate);
+      console.info("[EVO_LOOKUP_DIAGNOSTIC]", JSON.stringify({
+        profile: profile.key,
+        queryParam,
+        candidateCount: candidates.length,
+        candidatesWithCpf: candidates.filter(member => Boolean(member.cpf)).length,
+        candidatesWithBirthDate: candidates.filter(member => Boolean(member.birthDate)).length,
+        matched: Boolean(match)
+      }));
       if (match) return match;
     } catch (error) {
       lastIntegrationError = error;
@@ -137,6 +156,27 @@ export async function findEvoMemberByEmail(emailInput: string): Promise<EvoMembe
 export async function findEvoMemberByCpf(cpfInput: string): Promise<EvoMemberIdentity | null> {
   const cpf = normalizeCpf(cpfInput);
   if (!cpf) return null;
-  const queryParam = process.env.EVO_MEMBER_CPF_QUERY_PARAM?.trim() || "document";
-  return queryAcrossProfiles(queryParam, cpf, member => member.cpf === cpf);
+
+  const configured = process.env.EVO_MEMBER_CPF_QUERY_PARAM?.trim();
+  const queryParams = Array.from(new Set([
+    configured,
+    "cpf",
+    "document",
+    "documentNumber",
+    "documentId",
+    "cpfCnpj"
+  ].filter((value): value is string => Boolean(value))));
+
+  let lastIntegrationError: unknown;
+  for (const queryParam of queryParams) {
+    try {
+      const match = await queryAcrossProfiles(queryParam, cpf, member => member.cpf === cpf);
+      if (match) return match;
+    } catch (error) {
+      lastIntegrationError = error;
+    }
+  }
+
+  if (lastIntegrationError) throw lastIntegrationError;
+  return null;
 }
