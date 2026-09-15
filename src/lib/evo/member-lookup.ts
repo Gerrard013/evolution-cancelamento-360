@@ -52,26 +52,41 @@ function memberArray(raw: unknown): Record<string, unknown>[] {
   return Object.keys(root).length ? [root] : [];
 }
 
+function withHardTimeout<T>(promise: Promise<T>, timeoutMs: number, code: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<T>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(code)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
 async function evoGet(path: string, profile: EvoCredentialProfile, params?: Record<string, string>) {
   const base = baseUrl();
   const target = new URL(path, base);
   if (target.origin !== base.origin) throw new Error("EVO_SSRF_BLOCKED");
   for (const [key, value] of Object.entries(params || {})) target.searchParams.set(key, value);
 
-  const usage = await recordEvoHit();
+  const timeoutMs = Math.min(10000, Math.max(3000, Number(process.env.EVO_REQUEST_TIMEOUT_MS || 6500)));
+  console.info("[EVO_GET_BEGIN]", JSON.stringify({ profile: profile.key, path }));
+
+  const usage = await withHardTimeout(recordEvoHit(), 3000, "EVO_USAGE_TIMEOUT");
   if (usage.hitCount > usage.hardLimit) throw new Error("EVO_API_BUDGET_HARD_LIMIT");
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), Number(process.env.EVO_REQUEST_TIMEOUT_MS || 8000));
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(target, {
+    const response = await withHardTimeout(fetch(target, {
       method: "GET",
       headers: { Accept: "application/json, text/json, text/plain", ...evoAuthHeaders(profile.key) },
       cache: "no-store",
       redirect: "error",
       signal: controller.signal
-    });
-    const text = await response.text();
+    }), timeoutMs + 500, "EVO_FETCH_TIMEOUT");
+
+    const text = await withHardTimeout(response.text(), timeoutMs + 500, "EVO_BODY_TIMEOUT");
+    console.info("[EVO_GET_END]", JSON.stringify({ profile: profile.key, path, status: response.status }));
     if (!response.ok) throw new Error(`EVO_HTTP_${response.status}`);
     if (Buffer.byteLength(text, "utf8") > 2 * 1024 * 1024) throw new Error("EVO_RESPONSE_TOO_LARGE");
     return text ? JSON.parse(text) : {};
@@ -97,7 +112,11 @@ function basicCandidateId(data: Record<string, unknown>) {
   return str(data.idMember ?? data.memberId ?? data.id_member ?? data.id);
 }
 
-async function findProfileFromBasic(profile: EvoCredentialProfile, filter: "document" | "email", value: string, expected: (member: EvoMemberIdentity) => boolean) {
+function basicCandidateBirthDate(data: Record<string, unknown>) {
+  return normalizeDate(data.birthDate ?? data.birth_date ?? data.dateOfBirth ?? data.dataNascimento);
+}
+
+async function findProfileFromBasic(profile: EvoCredentialProfile, filter: "document" | "email", value: string, expectedBirthDate?: string) {
   const raw = await evoGet("/api/v1/members/basic", profile, {
     [filter]: value,
     take: "50",
@@ -108,20 +127,29 @@ async function findProfileFromBasic(profile: EvoCredentialProfile, filter: "docu
   console.info("[EVO_BASIC_LOOKUP]", JSON.stringify({
     profile: profile.key,
     filter,
-    candidateCount: candidates.length
+    candidateCount: candidates.length,
+    hasBirthDate: candidates.some(candidate => Boolean(basicCandidateBirthDate(candidate))),
+    hasEmail: candidates.some(candidate => Boolean(str(candidate.email ?? candidate.emailAddress ?? candidate.memberEmail)))
   }));
 
   for (const candidate of candidates) {
     const id = basicCandidateId(candidate);
     if (!id) continue;
+
+    const candidateBirthDate = basicCandidateBirthDate(candidate);
+    if (expectedBirthDate && candidateBirthDate && candidateBirthDate !== expectedBirthDate) continue;
+
     const profileRaw = await evoGet(`/api/v1/members/${encodeURIComponent(id)}`, profile);
     const member = mapProfile(profileRaw, profile);
-    if (member && expected(member)) return member;
+    if (!member) continue;
+
+    if (expectedBirthDate && member.birthDate !== expectedBirthDate) continue;
+    return member;
   }
   return null;
 }
 
-export async function findEvoMemberByCpf(cpfInput: string): Promise<EvoMemberIdentity | null> {
+export async function findEvoMemberByCpf(cpfInput: string, expectedBirthDate?: string): Promise<EvoMemberIdentity | null> {
   const cpf = normalizeCpf(cpfInput);
   if (!cpf) return null;
   const profiles = configuredEvoProfiles();
@@ -130,8 +158,8 @@ export async function findEvoMemberByCpf(cpfInput: string): Promise<EvoMemberIde
   let lastError: unknown;
   for (const profile of profiles) {
     try {
-      const match = await findProfileFromBasic(profile, "document", cpf, member => member.cpf === cpf);
-      if (match) return match;
+      const match = await findProfileFromBasic(profile, "document", cpf, expectedBirthDate);
+      if (match) return { ...match, cpf };
     } catch (error) {
       lastError = error;
       console.error(`[EVO_MEMBER_LOOKUP_${profile.key}]`, error instanceof Error ? error.message : error);
@@ -151,8 +179,8 @@ export async function findEvoMemberByEmail(emailInput: string): Promise<EvoMembe
   let lastError: unknown;
   for (const profile of profiles) {
     try {
-      const match = await findProfileFromBasic(profile, "email", email, member => member.email === email);
-      if (match) return match;
+      const match = await findProfileFromBasic(profile, "email", email);
+      if (match && match.email === email) return match;
     } catch (error) {
       lastError = error;
       console.error(`[EVO_MEMBER_LOOKUP_${profile.key}]`, error instanceof Error ? error.message : error);
