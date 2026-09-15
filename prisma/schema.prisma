@@ -47,12 +47,13 @@ model User {
   events    AuditEvent[]
 }
 
-// LGPD: não persistimos CPF no fluxo público. O ID do EVO é pseudonimizado:
-// hash para busca e ciphertext para chamadas server-side quando estritamente necessário.
+// LGPD: CPF nunca é salvo em texto puro. O CPF confirmado contra o EVO é cifrado apenas
+// para emissão do termo oficial; o ID do EVO também fica pseudonimizado/cifrado.
 model Customer {
   id                   String   @id @default(cuid())
   externalIdHash       String?  @unique
   externalIdCiphertext String?
+  cpfCiphertext        String?
   displayName          String
   contactHint          String?
   createdAt            DateTime @default(now())
@@ -100,41 +101,60 @@ model PublicAccessGrant {
   @@index([contractId, active])
 }
 
+// Desafio temporário de identidade: não armazena CPF, e-mail ou código em texto puro.
+model IdentityChallenge {
+  id                         String    @id @default(cuid())
+  externalMemberIdCiphertext String
+  cpfHash                    String
+  emailHash                  String
+  codeHash                   String
+  attempts                   Int       @default(0)
+  expiresAt                  DateTime
+  verifiedAt                 DateTime?
+  createdAt                  DateTime  @default(now())
+
+  @@index([expiresAt])
+  @@index([cpfHash, emailHash])
+}
+
 model CancellationRequest {
-  id                 String        @id @default(cuid())
-  protocol           String        @unique
-  activeKey          String?       @unique
-  customerId         String
-  contractId         String
-  unit               String
-  reasonCode         String
-  reasonDetails      String?
-  desiredDate        DateTime
-  status             RequestStatus @default(SENT)
-  slaDueAt           DateTime?
-  currentOwner       String?
-  termVersion        String
-  termAcceptedAt     DateTime
-  termGeneratedAt    DateTime?
+  id                   String        @id @default(cuid())
+  protocol             String        @unique
+  activeKey            String?       @unique
+  customerId           String
+  contractId           String
+  unit                 String
+  reasonCode           String
+  reasonDetails        String?
+  desiredDate          DateTime
+  status               RequestStatus @default(SENT)
+  slaDueAt             DateTime?
+  currentOwner         String?
+  termVersion          String
+  termAcceptedAt       DateTime
+  termGeneratedAt      DateTime?
   signedTermReceivedAt DateTime?
-  submittedAt        DateTime?
-  requesterAddress   String?
-  contactEmail       String?
-  pixKey             String?
-  cancellationFee    Decimal       @default(0) @db.Decimal(12, 2)
+  submittedAt          DateTime?
+  requesterAddress     String?
+  requesterRg          String?
+  contactEmail         String?
+  pixKey               String?
+  privacyConsentVersion String?
+  privacyConsentAt     DateTime?
+  cancellationFee      Decimal       @default(0) @db.Decimal(12, 2)
   cancellationFeePaidAt DateTime?
   paymentMethodRemovalStatus String?
-  evoOperationId     String?
-  evoLastErrorCode   String?
-  evoLastAttemptAt   DateTime?
-  createdAt          DateTime      @default(now())
-  updatedAt          DateTime      @updatedAt
-  customer           Customer      @relation(fields: [customerId], references: [id])
-  contract           Contract      @relation(fields: [contractId], references: [id])
-  calculations       RefundCalculation[]
-  refund             Refund?
-  attachments        Attachment[]
-  events             AuditEvent[]
+  evoOperationId       String?
+  evoLastErrorCode     String?
+  evoLastAttemptAt     DateTime?
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+  customer             Customer      @relation(fields: [customerId], references: [id])
+  contract             Contract      @relation(fields: [contractId], references: [id])
+  calculations         RefundCalculation[]
+  refund               Refund?
+  attachments          Attachment[]
+  events               AuditEvent[]
 
   @@index([unit, status])
   @@index([contractId, status])
@@ -203,27 +223,27 @@ model Attachment {
 }
 
 model AuditEvent {
-  id         String   @id @default(cuid())
-  requestId  String?
-  userId     String?
-  action     String
-  entity     String
-  entityId   String
-  before     Json?
-  after      Json?
-  ipHash     String?
+  id            String   @id @default(cuid())
+  requestId     String?
+  userId        String?
+  action        String
+  entity        String
+  entityId      String
+  before        Json?
+  after         Json?
+  ipHash        String?
   userAgentHash String?
-  createdAt  DateTime @default(now())
-  request    CancellationRequest? @relation(fields: [requestId], references: [id])
-  user       User? @relation(fields: [userId], references: [id])
+  createdAt     DateTime @default(now())
+  request       CancellationRequest? @relation(fields: [requestId], references: [id])
+  user          User? @relation(fields: [userId], references: [id])
 
   @@index([entity, entityId])
   @@index([createdAt])
 }
 
 model EvoApiUsage {
-  monthKey  String   @id
-  hitCount  Int      @default(0)
+  monthKey String   @id
+  hitCount Int      @default(0)
   updatedAt DateTime @updatedAt
 }
 
