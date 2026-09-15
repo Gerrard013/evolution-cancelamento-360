@@ -19,7 +19,10 @@ function activeLike(status: string) {
 
 async function saveCustomerAndContracts(customer: EvoCustomer) {
   const evo = evoAdapter();
-  const contracts = await evo.listContracts(customer.externalId);
+  const [contracts, invoices] = await Promise.all([
+    evo.listContracts(customer.externalId),
+    evo.listInvoices(customer.externalId).catch(() => [])
+  ]);
   const customerHash = hmac(customer.externalId, "EXTERNAL_ID_PEPPER");
   const cpf = normalizeCpf(customer.document || "");
   const email = customer.email?.trim().toLowerCase() || "";
@@ -52,7 +55,6 @@ async function saveCustomerAndContracts(customer: EvoCustomer) {
   const savedContracts = [];
   for (const contract of contracts) {
     const externalIdHash = hmac(contract.externalId, "EXTERNAL_ID_PEPPER");
-    const invoices = await evo.listInvoices(customer.externalId).catch(() => []);
     const contractInvoices = invoices.filter(i => !i.contractExternalId || i.contractExternalId === contract.externalId);
     const openInvoices = contractInvoices.filter(i => i.open);
     const metadata = {
