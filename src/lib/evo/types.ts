@@ -1,6 +1,10 @@
 export type EvoCustomer = {
   externalId: string;
   name: string;
+  email?: string;
+  document?: string;
+  rg?: string;
+  address?: string;
   contactHint?: string;
   birthDate?: string;
   phoneLast4?: string;
@@ -19,6 +23,16 @@ export type EvoContract = {
   status: string;
   paymentMethodId?: string;
   hasStoredCard?: boolean;
+};
+
+export type EvoInvoice = {
+  externalId?: string;
+  customerExternalId?: string;
+  contractExternalId?: string;
+  dueDate?: string;
+  amount: number;
+  status: string;
+  open: boolean;
 };
 
 export type EvoCancelResult = {
