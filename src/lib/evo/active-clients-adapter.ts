@@ -107,7 +107,9 @@ function customerFromProfile(data: Record<string, unknown>): EvoCustomer | null 
   const lastName = str(data.lastName ?? data.last_name) || "";
   const name = `${firstName} ${lastName}`.trim() || str(data.name) || "Cliente";
   const birthDate = dateOf(data.birthDate ?? data.birth_date);
-  const email = str(data.email);
+  const email = str(data.email)?.trim().toLowerCase();
+  const cpfRaw = str(data.cpf ?? data.CPF ?? data.document ?? data.documentNumber ?? data.cpfCnpj);
+  const cpf = cpfRaw?.replace(/\D/g, "") || undefined;
 
   let phoneLast4: string | undefined;
   const contacts = Array.isArray(data.contacts) ? data.contacts : [];
@@ -121,8 +123,8 @@ function customerFromProfile(data: Record<string, unknown>): EvoCustomer | null 
     }
   }
 
-  const contactHint = phoneLast4 ? `•••• ${phoneLast4}` : email ? email.replace(/^(.).+(@.*)$/, "$1•••$2") : undefined;
-  return { externalId, name, birthDate, phoneLast4, contactHint };
+  const contactHint = email ? email.replace(/^(.).+(@.*)$/, "$1•••$2") : phoneLast4 ? `•••• ${phoneLast4}` : undefined;
+  return { externalId, name, birthDate, phoneLast4, contactHint, email, cpf };
 }
 
 function membershipStatus(value: unknown) {
