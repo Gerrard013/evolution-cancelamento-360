@@ -2,6 +2,7 @@ import type { EvoAdapter } from "./adapter";
 import type { EvoCancelResult, EvoContract, EvoCustomer, EvoPaymentMethodResult } from "./types";
 import { HttpEvoAdapter } from "./http-adapter";
 import { recordEvoHit } from "./usage";
+import { evoAuthHeaders } from "./credentials";
 
 const DEFAULT_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const PROFILE_TTL_MS = 30_000;
@@ -32,18 +33,6 @@ function dateOf(value: unknown) {
   const date = new Date(raw);
   return Number.isNaN(date.getTime()) ? raw : date.toISOString();
 }
-function authHeaders(): Record<string, string> {
-  const token = process.env.EVO_API_TOKEN?.trim();
-  const username = process.env.EVO_API_USERNAME?.trim();
-  if (!token) throw new Error("EVO_API_TOKEN_NOT_CONFIGURED");
-  const mode = process.env.EVO_AUTH_MODE || "basic";
-  if (mode === "basic") {
-    if (!username) throw new Error("EVO_API_USERNAME_NOT_CONFIGURED");
-    return { Authorization: `Basic ${Buffer.from(`${username}:${token}`).toString("base64")}` };
-  }
-  if (mode === "header") return { [process.env.EVO_TOKEN_HEADER || "x-api-key"]: token };
-  return { Authorization: `Bearer ${token}` };
-}
 function wait(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -52,8 +41,9 @@ function profilePath(memberId: string) {
   return template.replace("{idMember}", encodeURIComponent(memberId));
 }
 
-async function memberProfileRaw(memberId: string) {
-  const cached = profileCache.get(memberId);
+async function memberProfileRaw(memberId: string, profileOrUnit?: string) {
+  const cacheKey = `${(profileOrUnit || "DEFAULT").toUpperCase()}:${memberId}`;
+  const cached = profileCache.get(cacheKey);
   if (cached && Date.now() - cached.at < PROFILE_TTL_MS) return cached.raw;
 
   const base = process.env.EVO_API_BASE_URL?.trim();
@@ -70,7 +60,7 @@ async function memberProfileRaw(memberId: string) {
     const timeout = setTimeout(() => controller.abort(), Number(process.env.EVO_REQUEST_TIMEOUT_MS || 12000));
     try {
       const response = await fetch(target, {
-        headers: { Accept: "application/json, text/json, text/plain", ...authHeaders() },
+        headers: { Accept: "application/json, text/json, text/plain", ...evoAuthHeaders(profileOrUnit) },
         redirect: "error",
         cache: "no-store",
         signal: controller.signal
@@ -89,7 +79,7 @@ async function memberProfileRaw(memberId: string) {
 
       const parsed = text ? JSON.parse(text) : {};
       const raw = obj(parsed);
-      profileCache.set(memberId, { at: Date.now(), raw });
+      profileCache.set(cacheKey, { at: Date.now(), raw });
       return raw;
     } finally {
       clearTimeout(timeout);
@@ -181,15 +171,21 @@ function contractsFromProfile(data: Record<string, unknown>, customerExternalId:
 }
 
 export class ActiveClientsEvoAdapter implements EvoAdapter {
-  private readonly fallback = new HttpEvoAdapter();
+  private readonly fallback: HttpEvoAdapter;
+  private readonly profileOrUnit?: string;
+
+  constructor(profileOrUnit?: string) {
+    this.profileOrUnit = profileOrUnit;
+    this.fallback = new HttpEvoAdapter(profileOrUnit);
+  }
 
   async findCustomerById(memberId: string) {
-    const raw = await memberProfileRaw(memberId);
+    const raw = await memberProfileRaw(memberId, this.profileOrUnit);
     return customerFromProfile(raw);
   }
 
   async listContracts(customerExternalId: string) {
-    const raw = await memberProfileRaw(customerExternalId);
+    const raw = await memberProfileRaw(customerExternalId, this.profileOrUnit);
     return contractsFromProfile(raw, customerExternalId);
   }
 

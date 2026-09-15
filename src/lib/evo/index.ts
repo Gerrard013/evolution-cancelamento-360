@@ -3,9 +3,9 @@ import { ManualEvoAdapter } from "./manual-adapter";
 import { HttpEvoAdapter } from "./http-adapter";
 import { ActiveClientsEvoAdapter } from "./active-clients-adapter";
 
-export function evoAdapter(): EvoAdapter {
+export function evoAdapter(profileOrUnit?: string): EvoAdapter {
   const mode = process.env.EVO_INTEGRATION_MODE || "manual";
   if (mode === "manual") return new ManualEvoAdapter();
-  if (process.env.EVO_ACTIVE_CLIENTS_PATH?.trim()) return new ActiveClientsEvoAdapter();
-  return new HttpEvoAdapter();
+  if (process.env.EVO_ACTIVE_CLIENTS_PATH?.trim()) return new ActiveClientsEvoAdapter(profileOrUnit);
+  return new HttpEvoAdapter(profileOrUnit);
 }

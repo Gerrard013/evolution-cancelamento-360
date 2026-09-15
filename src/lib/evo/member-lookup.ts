@@ -1,4 +1,5 @@
 import { recordEvoHit } from "./usage";
+import { configuredEvoProfiles, evoAuthHeaders, type EvoCredentialProfile } from "./credentials";
 
 export type EvoMemberIdentity = {
   externalId: string;
@@ -6,6 +7,7 @@ export type EvoMemberIdentity = {
   email: string;
   birthDate?: string;
   cpf?: string;
+  profileKey: "CONDOR" | "UMARIZAL" | "DEFAULT";
 };
 
 function baseUrl() {
@@ -14,19 +16,6 @@ function baseUrl() {
   const url = new URL(raw);
   if (url.protocol !== "https:") throw new Error("EVO_API_BASE_URL_MUST_USE_HTTPS");
   return url;
-}
-
-function authHeaders(): Record<string, string> {
-  const token = process.env.EVO_API_TOKEN?.trim();
-  const username = process.env.EVO_API_USERNAME?.trim();
-  if (!token) throw new Error("EVO_API_TOKEN_NOT_CONFIGURED");
-  const mode = process.env.EVO_AUTH_MODE || "basic";
-  if (mode === "basic") {
-    if (!username) throw new Error("EVO_API_USERNAME_NOT_CONFIGURED");
-    return { Authorization: `Basic ${Buffer.from(`${username}:${token}`).toString("base64")}` };
-  }
-  if (mode === "header") return { [process.env.EVO_TOKEN_HEADER || "x-api-key"]: token };
-  return { Authorization: `Bearer ${token}` };
 }
 
 function membersPath() {
@@ -53,6 +42,11 @@ function normalizeDate(value: unknown) {
   return d.toISOString().slice(0, 10);
 }
 
+function normalizeCpf(value: unknown) {
+  const digits = str(value).replace(/\D/g, "");
+  return digits.length === 11 ? digits : undefined;
+}
+
 function memberArray(raw: unknown): Record<string, unknown>[] {
   if (Array.isArray(raw)) return raw.map(objectOf);
   const root = objectOf(raw);
@@ -71,28 +65,25 @@ function memberArray(raw: unknown): Record<string, unknown>[] {
   return Object.keys(root).length ? [root] : [];
 }
 
-function mapMember(data: Record<string, unknown>): EvoMemberIdentity | null {
+function mapMember(data: Record<string, unknown>, profile: EvoCredentialProfile): EvoMemberIdentity | null {
   const externalId = str(data.idMember ?? data.memberId ?? data.id_member ?? data.id);
   const email = str(data.email).toLowerCase();
   const firstName = str(data.firstName ?? data.first_name);
   const lastName = str(data.lastName ?? data.last_name);
   const name = str(data.name ?? data.fullName ?? data.full_name) || `${firstName} ${lastName}`.trim() || "Cliente";
   const birthDate = normalizeDate(data.birthDate ?? data.birth_date ?? data.dateOfBirth ?? data.dataNascimento);
-  const cpf = str(data.cpf ?? data.CPF ?? data.document ?? data.documentNumber ?? data.cpfCnpj).replace(/\D/g, "") || undefined;
+  const cpf = normalizeCpf(data.cpf ?? data.CPF ?? data.document ?? data.documentNumber ?? data.cpfCnpj);
   if (!externalId || !email) return null;
-  return { externalId, email, name, birthDate, cpf };
+  return { externalId, email, name, birthDate, cpf, profileKey: profile.key };
 }
 
-export async function findEvoMemberByEmail(emailInput: string): Promise<EvoMemberIdentity | null> {
-  const email = emailInput.trim().toLowerCase();
-  if (!email) return null;
+async function queryMember(queryParam: string, queryValue: string, profile: EvoCredentialProfile): Promise<EvoMemberIdentity[]> {
+  if (!/^[A-Za-z0-9_.-]+$/.test(queryParam)) throw new Error("EVO_MEMBER_QUERY_PARAM_INVALID");
 
   const base = baseUrl();
   const target = new URL(membersPath(), base);
   if (target.origin !== base.origin) throw new Error("EVO_SSRF_BLOCKED");
-  const queryParam = process.env.EVO_MEMBER_EMAIL_QUERY_PARAM?.trim() || "email";
-  if (!/^[A-Za-z0-9_.-]+$/.test(queryParam)) throw new Error("EVO_MEMBER_EMAIL_QUERY_PARAM_INVALID");
-  target.searchParams.set(queryParam, email);
+  target.searchParams.set(queryParam, queryValue);
 
   const usage = await recordEvoHit();
   if (usage.hitCount > usage.hardLimit) throw new Error("EVO_API_BUDGET_HARD_LIMIT");
@@ -102,7 +93,7 @@ export async function findEvoMemberByEmail(emailInput: string): Promise<EvoMembe
   try {
     const response = await fetch(target, {
       method: "GET",
-      headers: { Accept: "application/json", ...authHeaders() },
+      headers: { Accept: "application/json", ...evoAuthHeaders(profile.key) },
       cache: "no-store",
       redirect: "error",
       signal: controller.signal
@@ -110,10 +101,42 @@ export async function findEvoMemberByEmail(emailInput: string): Promise<EvoMembe
     const text = await response.text();
     if (!response.ok) throw new Error(`EVO_HTTP_${response.status}`);
     if (Buffer.byteLength(text, "utf8") > 2 * 1024 * 1024) throw new Error("EVO_RESPONSE_TOO_LARGE");
-
-    const candidates = memberArray(text ? JSON.parse(text) : {}).map(mapMember).filter((m): m is EvoMemberIdentity => Boolean(m));
-    return candidates.find(member => member.email === email) || null;
+    return memberArray(text ? JSON.parse(text) : {}).map(item => mapMember(item, profile)).filter((m): m is EvoMemberIdentity => Boolean(m));
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function queryAcrossProfiles(queryParam: string, queryValue: string, predicate: (member: EvoMemberIdentity) => boolean) {
+  const profiles = configuredEvoProfiles();
+  if (!profiles.length) throw new Error("EVO_API_TOKEN_NOT_CONFIGURED");
+
+  let lastIntegrationError: unknown;
+  for (const profile of profiles) {
+    try {
+      const candidates = await queryMember(queryParam, queryValue, profile);
+      const match = candidates.find(predicate);
+      if (match) return match;
+    } catch (error) {
+      lastIntegrationError = error;
+      console.error(`[EVO_MEMBER_LOOKUP_${profile.key}]`, error instanceof Error ? error.message : error);
+    }
+  }
+
+  if (lastIntegrationError) throw lastIntegrationError;
+  return null;
+}
+
+export async function findEvoMemberByEmail(emailInput: string): Promise<EvoMemberIdentity | null> {
+  const email = emailInput.trim().toLowerCase();
+  if (!email) return null;
+  const queryParam = process.env.EVO_MEMBER_EMAIL_QUERY_PARAM?.trim() || "email";
+  return queryAcrossProfiles(queryParam, email, member => member.email === email);
+}
+
+export async function findEvoMemberByCpf(cpfInput: string): Promise<EvoMemberIdentity | null> {
+  const cpf = normalizeCpf(cpfInput);
+  if (!cpf) return null;
+  const queryParam = process.env.EVO_MEMBER_CPF_QUERY_PARAM?.trim() || "document";
+  return queryAcrossProfiles(queryParam, cpf, member => member.cpf === cpf);
 }

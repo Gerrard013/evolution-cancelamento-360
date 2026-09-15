@@ -12,6 +12,21 @@ const schema = z.object({
   code: z.string().trim().regex(/^\d{6}$/)
 });
 
+function parseMemberRef(value: string) {
+  try {
+    const parsed = JSON.parse(value) as { memberId?: unknown; profileKey?: unknown };
+    if (typeof parsed.memberId === "string" && parsed.memberId.trim()) {
+      return {
+        memberId: parsed.memberId.trim(),
+        profileKey: typeof parsed.profileKey === "string" ? parsed.profileKey.trim() : undefined
+      };
+    }
+  } catch {
+    // Compatibilidade com desafios criados antes do suporte a múltiplas unidades.
+  }
+  return { memberId: value, profileKey: undefined };
+}
+
 export async function POST(req: Request) {
   try {
     assertTrustedOrigin(req);
@@ -38,8 +53,8 @@ export async function POST(req: Request) {
       return Response.json({ error: "Código inválido. Confira o e-mail recebido e tente novamente." }, { status: 401 });
     }
 
-    const memberId = decryptText(challenge.externalMemberIdCiphertext);
-    const synced = await syncMemberFromEvo(memberId);
+    const memberRef = parseMemberRef(decryptText(challenge.externalMemberIdCiphertext));
+    const synced = await syncMemberFromEvo(memberRef.memberId, memberRef.profileKey);
     if (!synced) return Response.json({ error: "Não foi possível carregar seu cadastro no EVO." }, { status: 502 });
 
     const activeContracts = synced.contracts.filter(contract => contract.status === "ACTIVE");
