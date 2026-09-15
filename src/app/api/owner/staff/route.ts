@@ -44,11 +44,17 @@ export async function POST(req: Request) {
     assertTrustedOrigin(req);
     const owner = await requireOwnerApi();
     const input = createSchema.parse(await readJsonLimited(req, 12_000));
+    const email = input.email.toLowerCase();
+    const username = input.username.toLowerCase();
+
+    const duplicate = await prisma.user.findFirst({ where: { OR: [{ email }, { username }] }, select: { id: true } });
+    if (duplicate) return Response.json({ error: "Usuário ou e-mail já cadastrado." }, { status: 409 });
+
     const user = await prisma.user.create({
       data: {
         name: input.name,
-        email: input.email.toLowerCase(),
-        username: input.username.toLowerCase(),
+        email,
+        username,
         passwordHash: hashPassword(input.password),
         role: input.role,
         unit: input.unit || null,
@@ -62,7 +68,7 @@ export async function POST(req: Request) {
   } catch (error) {
     if (error instanceof Response) return error;
     if (error instanceof z.ZodError) return Response.json({ error: "Confira os dados do usuário." }, { status: 400 });
-    return Response.json({ error: "Não foi possível criar o acesso. Verifique se usuário/e-mail já existem." }, { status: 409 });
+    return Response.json({ error: "Não foi possível criar o acesso." }, { status: 500 });
   }
 }
 
@@ -77,7 +83,12 @@ export async function PATCH(req: Request) {
     const invalidatesSession = input.active !== undefined || input.password !== undefined || input.role !== undefined;
     const data: Record<string, unknown> = {};
     if (input.name !== undefined) data.name = input.name;
-    if (input.email !== undefined) data.email = input.email.toLowerCase();
+    if (input.email !== undefined) {
+      const email = input.email.toLowerCase();
+      const duplicate = await prisma.user.findFirst({ where: { email, id: { not: current.id } }, select: { id: true } });
+      if (duplicate) return Response.json({ error: "E-mail já cadastrado." }, { status: 409 });
+      data.email = email;
+    }
     if (input.role !== undefined) data.role = input.role;
     if (input.unit !== undefined) data.unit = input.unit || null;
     if (input.password !== undefined) data.passwordHash = hashPassword(input.password);
