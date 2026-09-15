@@ -125,6 +125,8 @@ model IdentityChallenge {
   @@index([expiresAt])
 }
 
+// Modelo legado mantido apenas para compatibilidade de banco.
+// A V7 desativou IDs públicos como mecanismo de autenticação.
 model PublicAccessGrant {
   id          String   @id @default(cuid())
   codeHash    String   @unique
@@ -149,7 +151,8 @@ model CancellationRequest {
   contractId            String
   unit                  String
   reasonCode            String
-  reasonDetails         String?
+  reasonDetails         String?       // legado; novas gravações usam reasonDetailsCiphertext
+  reasonDetailsCiphertext String?
   desiredDate           DateTime
   status                RequestStatus @default(SENT)
   slaDueAt              DateTime?
@@ -159,7 +162,8 @@ model CancellationRequest {
   termGeneratedAt       DateTime?
   signedTermReceivedAt  DateTime?
   submittedAt           DateTime?
-  requesterAddress      String?
+  requesterAddress      String?       // legado; novas gravações usam requesterAddressCiphertext
+  requesterAddressCiphertext String?
   rgCiphertext          String?
   cpfLast4              String?
   verifiedEmailMask     String?
@@ -169,7 +173,8 @@ model CancellationRequest {
   lgpdConsentAt         DateTime?
   sourceChannel         String        @default("OFFICIAL_PORTAL")
   contactEmail          String?
-  pixKey                String?
+  pixKey                String?       // legado; novas gravações usam pixKeyCiphertext
+  pixKeyCiphertext      String?
   cancellationFee       Decimal       @default(0) @db.Decimal(12, 2)
   cancellationFeePaidAt DateTime?
   refundDueAt           DateTime?
