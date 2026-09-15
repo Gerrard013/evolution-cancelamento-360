@@ -1,5 +1,8 @@
 import SelfServiceStart from "./SelfServiceStart";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export default function Home() {
   return (
     <main className="official-home immersive-home">
@@ -18,9 +21,9 @@ export default function Home() {
         <div className="official-copy motion-panel">
           <div className="hero-kicker"><span>CANAL OFICIAL</span><i/> EVOLUTION ACADEMIA</div>
           <h1>Seu cancelamento,<br/><em>sem fila e sem e-mail.</em></h1>
-          <p className="lead">Confirme sua identidade com os dados cadastrados no EVO, receba um código no seu e-mail, confira seu contrato, gere o termo e acompanhe tudo por protocolo.</p>
+          <p className="lead">Confirme sua identidade com CPF e data de nascimento cadastrados no EVO. O código é enviado somente ao e-mail já registrado na Evolution; depois, confira seu contrato, gere o termo e acompanhe tudo por protocolo.</p>
           <div className="official-points premium-points">
-            <span>Validação real no EVO</span><span>Código por e-mail</span><span>Termo digital</span><span>Acompanhamento</span>
+            <span>Validação real no EVO</span><span>OTP no e-mail cadastrado</span><span>Termo digital</span><span>Acompanhamento</span>
           </div>
 
           <div className="experience-visual glass">
@@ -43,8 +46,8 @@ export default function Home() {
       </section>
 
       <section className="experience-strip">
-        <article><span>01</span><b>Identifique-se</b><small>Nome + nascimento + e-mail</small></article>
-        <article><span>02</span><b>Confirme o código</b><small>OTP enviado ao e-mail do EVO</small></article>
+        <article><span>01</span><b>Identifique-se</b><small>CPF + data de nascimento</small></article>
+        <article><span>02</span><b>Confirme o código</b><small>OTP enviado ao e-mail já cadastrado no EVO</small></article>
         <article><span>03</span><b>Solicite</b><small>Contrato, motivo, valores e termo</small></article>
         <article><span>04</span><b>Acompanhe</b><small>Protocolo até a conclusão</small></article>
       </section>
