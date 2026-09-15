@@ -15,13 +15,13 @@ function activeLike(status: string) {
   return configured.some(x => value === x || value.includes(x));
 }
 
-export async function syncMemberFromEvo(memberId: string) {
-  const evo = evoAdapter();
+export async function syncMemberFromEvo(memberId: string, profileKey?: string) {
+  const evo = evoAdapter(profileKey);
   const customer: EvoCustomer | null = await evo.findCustomerById(memberId);
   if (!customer) return null;
   const contracts = await evo.listContracts(customer.externalId);
 
-  const customerHash = hmac(customer.externalId, "EXTERNAL_ID_PEPPER");
+  const customerHash = hmac(`${profileKey || "DEFAULT"}:${customer.externalId}`, "EXTERNAL_ID_PEPPER");
   const cpfCiphertext = customer.cpf ? encryptText(customer.cpf) : undefined;
   const emailCiphertext = customer.email ? encryptText(customer.email.toLowerCase()) : undefined;
   const savedCustomer = await prisma.customer.upsert({
@@ -45,11 +45,13 @@ export async function syncMemberFromEvo(memberId: string) {
 
   const savedContracts = [];
   for (const contract of contracts) {
-    const externalIdHash = hmac(contract.externalId, "EXTERNAL_ID_PEPPER");
+    const unit = normalizedUnit(contract.unit);
+    const externalIdHash = hmac(`${profileKey || unit || "DEFAULT"}:${contract.externalId}`, "EXTERNAL_ID_PEPPER");
     const metadata = {
       paymentMethodId: contract.paymentMethodId || null,
       hasStoredCard: contract.hasStoredCard ?? null,
-      sourceStatus: contract.status
+      sourceStatus: contract.status,
+      evoProfile: profileKey || null
     };
     const saved = await prisma.contract.upsert({
       where: { externalIdHash },
@@ -57,7 +59,7 @@ export async function syncMemberFromEvo(memberId: string) {
         externalIdHash,
         externalIdCiphertext: encryptText(contract.externalId),
         customerId: savedCustomer.id,
-        unit: normalizedUnit(contract.unit),
+        unit,
         planName: contract.planName,
         planType: contract.planType,
         startDate: new Date(contract.startDate),
@@ -70,7 +72,7 @@ export async function syncMemberFromEvo(memberId: string) {
       },
       update: {
         customerId: savedCustomer.id,
-        unit: normalizedUnit(contract.unit),
+        unit,
         planName: contract.planName,
         planType: contract.planType,
         startDate: new Date(contract.startDate),
