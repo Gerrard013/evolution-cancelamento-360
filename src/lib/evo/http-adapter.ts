@@ -29,7 +29,7 @@ function pathFromEnv(name: string, params: Record<string, string>): string {
 function authHeaders(): Record<string, string> {
   const token = process.env.EVO_API_TOKEN?.trim();
   if (!token) throw new Error("EVO_API_TOKEN_NOT_CONFIGURED");
-  const mode = process.env.EVO_AUTH_MODE || "bearer";
+  const mode = process.env.EVO_AUTH_MODE || "basic";
   if (mode === "basic") {
     const username = process.env.EVO_API_USERNAME?.trim();
     if (!username) throw new Error("EVO_API_USERNAME_NOT_CONFIGURED");
@@ -130,32 +130,36 @@ function mapCustomer(raw: unknown): EvoCustomer | null {
   const data = firstPayloadObject(raw);
   const id = asString(pick(data, "id", "externalId", "memberId", "idMember", "idCliente"));
   if (!id) return null;
-  const name = asString(pick(data, "name", "nome", "fullName", "nomeCompleto")) || "Cliente";
+  const firstName = asString(pick(data, "firstName", "first_name")) || "";
+  const lastName = asString(pick(data, "lastName", "last_name")) || "";
+  const name = asString(pick(data, "name", "nome", "fullName", "nomeCompleto")) || `${firstName} ${lastName}`.trim() || "Cliente";
   const phone = asString(pick(data, "phone", "telefone", "mobile", "celular", "phoneNumber"));
-  const email = asString(pick(data, "email"));
+  const email = asString(pick(data, "email"))?.trim().toLowerCase();
   const birthDate = normalizeDateString(pick(data, "birthDate", "dateOfBirth", "dataNascimento", "birth_date", "birthday", "data_nascimento"));
+  const cpfRaw = asString(pick(data, "cpf", "CPF", "document", "documentNumber", "cpfCnpj"));
+  const cpf = cpfRaw?.replace(/\D/g, "") || undefined;
   const digits = phone?.replace(/\D/g, "") || "";
   const phoneLast4 = digits.length >= 4 ? digits.slice(-4) : undefined;
-  const hint = phoneLast4 ? `•••• ${phoneLast4}` : email ? email.replace(/^(.).+(@.*)$/, "$1•••$2") : undefined;
-  return { externalId: id, name, contactHint: hint, birthDate, phoneLast4 };
+  const hint = email ? email.replace(/^(.).+(@.*)$/, "$1•••$2") : phoneLast4 ? `•••• ${phoneLast4}` : undefined;
+  return { externalId: id, name, contactHint: hint, birthDate, phoneLast4, email, cpf };
 }
 
 function mapContract(raw: unknown, fallbackCustomerId?: string): EvoContract | null {
   const data = obj(raw);
-  const id = asString(pick(data, "id", "externalId", "contractId", "idContract", "idContrato"));
+  const id = asString(pick(data, "id", "externalId", "contractId", "idContract", "idContrato", "idMemberMembership"));
   const customerId = asString(pick(data, "customerExternalId", "memberId", "idMember", "customerId", "idCliente")) || fallbackCustomerId;
   if (!id || !customerId) return null;
   return {
     externalId: id,
     customerExternalId: customerId,
     unit: asEntityName(pick(data, "unit", "unidade", "branch", "branchName", "branchUnit")) || "Evolution",
-    planName: asEntityName(pick(data, "planName", "plan", "plano", "membershipName", "membership")) || "Plano",
+    planName: asEntityName(pick(data, "planName", "plan", "plano", "membershipName", "membership", "name")) || "Plano",
     planType: asEntityName(pick(data, "planType", "tipoPlano", "type", "membershipType")) || "UNKNOWN",
     startDate: normalizeDateString(pick(data, "startDate", "inicio", "dateStart", "start_date", "dataInicio")) || new Date().toISOString(),
     endDate: normalizeDateString(pick(data, "endDate", "fim", "dateEnd", "end_date", "dataFim")),
-    amountPaid: asNumber(pick(data, "contractValue", "valorContrato", "totalAmount", "totalValue", "valorTotal", "value", "price", "amountPaid", "valorPago", "paidAmount", "totalPaid")),
+    amountPaid: asNumber(pick(data, "contractValue", "valorContrato", "totalAmount", "totalValue", "valorTotal", "value", "price", "amountPaid", "valorPago", "paidAmount", "totalPaid", "originalValue")),
     recurring: asBoolean(pick(data, "recurring", "recorrente", "isRecurring")),
-    status: asEntityName(pick(data, "status", "situacao", "contractStatus")) || "UNKNOWN",
+    status: asEntityName(pick(data, "status", "situacao", "contractStatus", "membershipStatus")) || "UNKNOWN",
     paymentMethodId: asString(pick(data, "paymentMethodId", "idPaymentMethod", "paymentId", "idFormaPagamento")),
     hasStoredCard: asBoolean(pick(data, "hasStoredCard", "cardStored", "cartaoSalvo", "hasCard"))
   };
@@ -211,12 +215,28 @@ export class HttpEvoAdapter implements EvoAdapter {
   async cancelContract(contractExternalId: string, protocol: string): Promise<EvoCancelResult> {
     if (process.env.EVO_INTEGRATION_MODE !== "write" || process.env.EVO_WRITE_ENABLED !== "true") throw new Error("EVO_WRITE_DISABLED");
     const path = pathFromEnv("EVO_CANCEL_CONTRACT_PATH", { id: contractExternalId, contractId: contractExternalId });
-    const method = (process.env.EVO_CANCEL_METHOD || "DELETE").toUpperCase();
-    if (!["DELETE", "PUT"].includes(method)) throw new Error("EVO_CANCEL_METHOD_INVALID");
+    const method = (process.env.EVO_CANCEL_METHOD || "POST").toUpperCase();
+    if (!["POST", "DELETE", "PUT"].includes(method)) throw new Error("EVO_CANCEL_METHOD_INVALID");
+
+    let body: string | undefined;
+    if (method === "POST") {
+      const idField = process.env.EVO_CANCEL_ID_FIELD?.trim() || "idMemberMembership";
+      if (!/^[A-Za-z0-9_]+$/.test(idField)) throw new Error("EVO_CANCEL_ID_FIELD_INVALID");
+      const payload: Record<string, unknown> = { [idField]: contractExternalId };
+      const protocolField = process.env.EVO_CANCEL_PROTOCOL_FIELD?.trim();
+      if (protocolField) {
+        if (!/^[A-Za-z0-9_]+$/.test(protocolField)) throw new Error("EVO_CANCEL_PROTOCOL_FIELD_INVALID");
+        payload[protocolField] = protocol;
+      }
+      body = JSON.stringify(payload);
+    } else if (method === "PUT") {
+      body = JSON.stringify({ status: "cancelled", protocol });
+    }
+
     const raw = await evoFetch(path, {
       method,
       headers: { "Idempotency-Key": protocol },
-      body: method === "PUT" ? JSON.stringify({ status: "cancelled", protocol }) : undefined
+      body
     });
     const data = obj(raw);
     return {
@@ -241,5 +261,4 @@ export class HttpEvoAdapter implements EvoAdapter {
     const data = obj(raw);
     return { removed: true, operationId: asString(pick(data, "operationId", "id", "requestId")) };
   }
-
 }
