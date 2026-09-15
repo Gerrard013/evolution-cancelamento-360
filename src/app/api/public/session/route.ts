@@ -5,6 +5,7 @@ import { hashPublicAccessCode } from "@/lib/security/crypto";
 import { CUSTOMER_COOKIE, createSessionToken, secureCookieOptions } from "@/lib/security/session";
 import { assertTrustedOrigin, readJsonLimited } from "@/lib/security/request";
 import { configuredLimit, enforceRateLimit } from "@/lib/security/rate-limit";
+import { enforcePersistentRateLimit } from "@/lib/security/persistent-rate-limit";
 
 const schema = z.object({ accessId: z.string().trim().min(8).max(64) });
 
@@ -13,6 +14,7 @@ export async function POST(req: Request) {
     assertTrustedOrigin(req);
     enforceRateLimit(req, "public-access", configuredLimit("RATE_LIMIT_PUBLIC_PER_10_MIN", 20), 10 * 60_000);
     const { accessId } = schema.parse(await readJsonLimited(req, 4_096));
+    await enforcePersistentRateLimit("public-access", hashPublicAccessCode(accessId), 10, 10 * 60_000);
 
     let contractId: string;
     let grantId: string;
@@ -20,16 +22,23 @@ export async function POST(req: Request) {
       contractId = "demo-contract";
       grantId = "demo-grant";
     } else {
+      const codeHash = hashPublicAccessCode(accessId);
       const grant = await prisma.publicAccessGrant.findUnique({
-        where: { codeHash: hashPublicAccessCode(accessId) },
+        where: { codeHash },
         include: { contract: true }
       });
-      if (!grant || !grant.active || grant.expiresAt <= new Date()) {
+      if (!grant || !grant.active || grant.expiresAt <= new Date() || grant.contract.status !== "ACTIVE") {
         return Response.json({ error: "ID de acesso inválido ou expirado" }, { status: 401 });
       }
+
+      const consumed = await prisma.publicAccessGrant.updateMany({
+        where: { id: grant.id, active: true, expiresAt: { gt: new Date() } },
+        data: { active: false, lastUsedAt: new Date() }
+      });
+      if (consumed.count !== 1) return Response.json({ error: "ID de acesso já utilizado ou expirado" }, { status: 401 });
+
       contractId = grant.contractId;
       grantId = grant.id;
-      await prisma.publicAccessGrant.update({ where: { id: grant.id }, data: { lastUsedAt: new Date() } });
     }
 
     const ttl = 30 * 60;
