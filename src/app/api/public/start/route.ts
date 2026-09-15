@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/db/prisma";
 import { assertTrustedOrigin, readJsonLimited } from "@/lib/security/request";
 import { configuredLimit, enforceRateLimit } from "@/lib/security/rate-limit";
+import { enforcePersistentRateLimit } from "@/lib/security/persistent-rate-limit";
 import { encryptText, hmac } from "@/lib/security/crypto";
 import { findEvoMemberByCpf } from "@/lib/evo/member-lookup";
 import { sendIdentityCode } from "@/lib/security/mailer";
@@ -44,12 +45,16 @@ function publicIntegrationError(error: unknown) {
   if (message.includes("EVO_HTTP_403")) return { status: 502, error: "A integração com o EVO não tem permissão suficiente. Código EVO-403." };
   if (message.includes("EVO_HTTP_429")) return { status: 503, error: "A validação está temporariamente indisponível. Tente novamente em alguns minutos." };
   if (message.includes("EVO_FETCH_TIMEOUT") || message.includes("EVO_BODY_TIMEOUT") || message.includes("EVO_USAGE_TIMEOUT")) return { status: 504, error: "O EVO demorou mais que o esperado para responder. Tente novamente." };
-  if (message.includes("SMTP_NOT_CONFIGURED") || message.includes("SMTP_FROM_NOT_CONFIGURED")) return { status: 503, error: "O envio do código de confirmação ainda não está configurado." };
+  if (message.includes("RESEND_HTTP_403")) return { status: 503, error: "A identidade foi localizada no EVO, mas o domínio de e-mail da Evolution ainda não está autorizado para enviar o código." };
+  if (message.includes("RESEND_HTTP_401")) return { status: 503, error: "O serviço de envio do código precisa ser reautorizado." };
+  if (message.includes("RESEND_TIMEOUT")) return { status: 503, error: "O serviço de envio do código demorou para responder. Tente novamente." };
+  if (message.includes("SMTP_NOT_CONFIGURED") || message.includes("SMTP_FROM_NOT_CONFIGURED") || message.includes("RESEND_API_KEY_NOT_CONFIGURED")) return { status: 503, error: "O envio do código de confirmação ainda não está configurado." };
   if (message.includes("EVO_")) return { status: 502, error: "Não foi possível validar os dados no EVO agora. Tente novamente em instantes." };
   return { status: 500, error: "Não foi possível iniciar a validação agora." };
 }
 
 export async function POST(req: Request) {
+  const startedAt = Date.now();
   try {
     assertTrustedOrigin(req);
     enforceRateLimit(req, "identity-start", Math.min(configuredLimit("RATE_LIMIT_PUBLIC_PER_10_MIN", 20), 6), 10 * 60_000);
@@ -62,7 +67,11 @@ export async function POST(req: Request) {
     const cpf = normalizeCpf(input.cpf);
     if (cpf.length !== 11) return Response.json({ error: "Informe um CPF válido com 11 dígitos." }, { status: 400 });
 
+    await enforcePersistentRateLimit("identity-start", cpf, 6, 10 * 60_000);
+    console.info("[IDENTITY_STAGE]", JSON.stringify({ stage: "evo_lookup_begin" }));
     const member = await findEvoMemberByCpf(cpf, input.birthDate);
+    console.info("[IDENTITY_STAGE]", JSON.stringify({ stage: "evo_lookup_end", found: Boolean(member), ms: Date.now() - startedAt }));
+
     const cpfMatches = Boolean(member?.cpf && normalizeCpf(member.cpf) === cpf);
     const birthMatches = Boolean(member?.birthDate && member.birthDate === input.birthDate);
 
@@ -82,6 +91,7 @@ export async function POST(req: Request) {
 
     await prisma.identityChallenge.deleteMany({ where: { expiresAt: { lt: new Date() } } }).catch(() => undefined);
 
+    console.info("[IDENTITY_STAGE]", JSON.stringify({ stage: "challenge_write_begin", ms: Date.now() - startedAt }));
     const challenge = await prisma.identityChallenge.create({
       data: {
         externalMemberIdCiphertext: encryptText(memberRef),
@@ -92,9 +102,12 @@ export async function POST(req: Request) {
         expiresAt: new Date(Date.now() + ttlMinutes * 60_000)
       }
     });
+    console.info("[IDENTITY_STAGE]", JSON.stringify({ stage: "challenge_write_end", ms: Date.now() - startedAt }));
 
     try {
+      console.info("[IDENTITY_STAGE]", JSON.stringify({ stage: "mail_send_begin", ms: Date.now() - startedAt }));
       await sendIdentityCode(email, code);
+      console.info("[IDENTITY_STAGE]", JSON.stringify({ stage: "mail_send_end", ms: Date.now() - startedAt }));
     } catch (error) {
       await prisma.identityChallenge.delete({ where: { id: challenge.id } }).catch(() => undefined);
       throw error;
