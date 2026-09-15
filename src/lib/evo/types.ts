@@ -4,6 +4,8 @@ export type EvoCustomer = {
   contactHint?: string;
   birthDate?: string;
   phoneLast4?: string;
+  email?: string;
+  cpf?: string;
 };
 
 export type EvoContract = {
