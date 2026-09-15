@@ -2,6 +2,8 @@ import { prisma } from "@/lib/db/prisma";
 import { decryptText } from "@/lib/security/crypto";
 import { evoAdapter } from "@/lib/evo";
 
+const EXECUTABLE_STATUSES = ["READY_TO_CANCEL", "APPROVED", "MANUAL_REVIEW", "UNDER_REVIEW"] as const;
+
 export async function executeCancellationInEvo(requestId: string) {
   const item = await prisma.cancellationRequest.findUnique({
     where: { id: requestId },
@@ -11,9 +13,28 @@ export async function executeCancellationInEvo(requestId: string) {
     }
   });
   if (!item) throw new Error("REQUEST_NOT_FOUND");
+  if (item.contract.status === "CANCELLED" || ["COMPLETED", "EVO_CANCELLED", "CANCELLED_CONFIRMED"].includes(item.status)) throw new Error("ALREADY_CANCELLED");
+  if (!EXECUTABLE_STATUSES.includes(item.status as typeof EXECUTABLE_STATUSES[number])) throw new Error("REQUEST_STATUS_NOT_EXECUTABLE");
   if (item.cancellationFee.gt(0) && !item.cancellationFeePaidAt) throw new Error("FEE_NOT_PAID");
   if (!item.contract.externalIdCiphertext) throw new Error("CONTRACT_EXTERNAL_ID_MISSING");
   if (process.env.EVO_INTEGRATION_MODE !== "write" || process.env.EVO_WRITE_ENABLED !== "true") throw new Error("EVO_WRITE_DISABLED");
+
+  const locked = await prisma.cancellationRequest.updateMany({
+    where: { id: item.id, status: { in: [...EXECUTABLE_STATUSES] } },
+    data: { status: "EVO_CANCEL_REQUESTED", evoLastAttemptAt: new Date(), evoLastErrorCode: null }
+  });
+  if (locked.count !== 1) throw new Error("EVO_CANCELLATION_ALREADY_IN_PROGRESS");
+
+  await prisma.auditEvent.create({
+    data: {
+      requestId: item.id,
+      action: "EVO_CANCELLATION_REQUESTED",
+      entity: "CancellationRequest",
+      entityId: item.id,
+      before: { status: item.status },
+      after: { status: "EVO_CANCEL_REQUESTED", unit: item.contract.unit }
+    }
+  });
 
   const externalContractId = decryptText(item.contract.externalIdCiphertext);
   const externalCustomerId = item.contract.customer.externalIdCiphertext ? decryptText(item.contract.customer.externalIdCiphertext) : "";
