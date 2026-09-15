@@ -15,6 +15,16 @@ function maxResponseBytes() {
 function obj(input: unknown): Record<string, unknown> {
   return input && typeof input === "object" && !Array.isArray(input) ? input as Record<string, unknown> : {};
 }
+function firstPayloadObject(raw: unknown): Record<string, unknown> {
+  if (Array.isArray(raw)) return obj(raw[0]);
+  const root = obj(raw);
+  for (const key of ["data", "item", "result", "member", "customer", "cliente", "aluno"]) {
+    const value = root[key];
+    if (Array.isArray(value)) return obj(value[0]);
+    if (value && typeof value === "object") return obj(value);
+  }
+  return root;
+}
 function str(value: unknown) {
   return typeof value === "string" || typeof value === "number" ? String(value) : undefined;
 }
@@ -38,6 +48,7 @@ function wait(ms: number) {
 }
 function profilePath(memberId: string) {
   const template = process.env.EVO_MEMBER_PROFILE_PATH || "/api/v1/members/{idMember}";
+  if (!template.startsWith("/") || template.includes("://")) throw new Error("EVO_MEMBER_PROFILE_PATH_INVALID");
   return template.replace("{idMember}", encodeURIComponent(memberId));
 }
 
@@ -56,8 +67,9 @@ async function memberProfileRaw(memberId: string, profileOrUnit?: string) {
     const usage = await recordEvoHit();
     if (usage.hitCount > usage.hardLimit) throw new Error("EVO_API_BUDGET_HARD_LIMIT");
 
+    const timeoutMs = Math.min(10_000, Math.max(3_000, Number(process.env.EVO_REQUEST_TIMEOUT_MS || 8_000)));
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), Number(process.env.EVO_REQUEST_TIMEOUT_MS || 12000));
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await fetch(target, {
         headers: { Accept: "application/json, text/json, text/plain", ...evoAuthHeaders(profileOrUnit) },
@@ -69,7 +81,7 @@ async function memberProfileRaw(memberId: string, profileOrUnit?: string) {
       if (Buffer.byteLength(text, "utf8") > maxResponseBytes()) throw new Error("EVO_RESPONSE_TOO_LARGE");
 
       if (!response.ok) {
-        console.error("[EVO_MEMBER_PROFILE_HTTP]", response.status, text.slice(0, 500));
+        console.error("[EVO_MEMBER_PROFILE_HTTP]", JSON.stringify({ status: response.status, profile: profileOrUnit || "DEFAULT" }));
         if ([502, 503, 504].includes(response.status) && attempt < 2) {
           await wait(600 * attempt);
           continue;
@@ -77,10 +89,15 @@ async function memberProfileRaw(memberId: string, profileOrUnit?: string) {
         throw new Error(`EVO_HTTP_${response.status}`);
       }
 
-      const parsed = text ? JSON.parse(text) : {};
-      const raw = obj(parsed);
+      let parsed: unknown;
+      try { parsed = text ? JSON.parse(text) : {}; }
+      catch { throw new Error("EVO_INVALID_JSON"); }
+      const raw = firstPayloadObject(parsed);
       profileCache.set(cacheKey, { at: Date.now(), raw });
       return raw;
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") throw new Error("EVO_FETCH_TIMEOUT");
+      throw error;
     } finally {
       clearTimeout(timeout);
     }
@@ -96,8 +113,8 @@ function customerFromProfile(data: Record<string, unknown>): EvoCustomer | null 
   const firstName = str(data.firstName ?? data.first_name) || "";
   const lastName = str(data.lastName ?? data.last_name) || "";
   const name = `${firstName} ${lastName}`.trim() || str(data.name) || "Cliente";
-  const birthDate = dateOf(data.birthDate ?? data.birth_date);
-  const email = str(data.email)?.trim().toLowerCase();
+  const birthDate = dateOf(data.birthDate ?? data.birth_date ?? data.dateOfBirth ?? data.dataNascimento);
+  const email = str(data.email ?? data.emailAddress ?? data.memberEmail)?.trim().toLowerCase();
   const cpfRaw = str(data.cpf ?? data.CPF ?? data.document ?? data.documentNumber ?? data.cpfCnpj);
   const cpf = cpfRaw?.replace(/\D/g, "") || undefined;
 
