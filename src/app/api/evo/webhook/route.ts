@@ -4,6 +4,7 @@ import { invalidateCachePrefix } from "@/lib/evo/cache";
 import { sha256 } from "@/lib/security/crypto";
 
 const MAX_BODY = 1_048_576;
+const CACHE_PROFILES = ["DEFAULT", "CONDOR", "UMARIZAL"];
 
 function safeEqual(a: string, b: string) {
   const ab = Buffer.from(a);
@@ -23,7 +24,7 @@ function verifyAuth(req: Request, raw: string) {
   const timestampHeader = (process.env.EVO_WEBHOOK_TIMESTAMP_HEADER || "x-evo-timestamp").toLowerCase();
   const signature = (req.headers.get(signatureHeader) || "").replace(/^sha256=/i, "");
   const timestamp = req.headers.get(timestampHeader) || "";
-  const maxSkew = Number(process.env.EVO_WEBHOOK_MAX_SKEW_SECONDS || 300);
+  const maxSkew = Math.min(900, Math.max(30, Number(process.env.EVO_WEBHOOK_MAX_SKEW_SECONDS || 300)));
   const ts = Number(timestamp);
   if (!signature || !Number.isFinite(ts) || Math.abs(Date.now() / 1000 - ts) > maxSkew) return false;
   const expected = crypto.createHmac("sha256", secret).update(`${timestamp}.${raw}`).digest("hex");
@@ -32,16 +33,27 @@ function verifyAuth(req: Request, raw: string) {
 
 function deepFindString(value: unknown, keys: string[]): string | undefined {
   if (!value || typeof value !== "object") return undefined;
-  const obj = value as Record<string, unknown>;
+  const data = value as Record<string, unknown>;
   for (const key of keys) {
-    const candidate = obj[key];
+    const candidate = data[key];
     if (typeof candidate === "string" || typeof candidate === "number") return String(candidate);
   }
-  for (const child of Object.values(obj)) {
+  for (const child of Object.values(data)) {
     const found = deepFindString(child, keys);
     if (found) return found;
   }
   return undefined;
+}
+
+async function invalidateMember(memberId: string) {
+  await Promise.all(CACHE_PROFILES.flatMap(profile => [
+    invalidateCachePrefix(`${profile}:member:${memberId}`),
+    invalidateCachePrefix(`${profile}:contracts:${memberId}`)
+  ]));
+}
+
+async function invalidateContract(contractId: string) {
+  await Promise.all(CACHE_PROFILES.map(profile => invalidateCachePrefix(`${profile}:contract:${contractId}`)));
 }
 
 export async function POST(req: Request) {
@@ -66,11 +78,8 @@ export async function POST(req: Request) {
 
   const memberId = deepFindString(payload, ["memberId", "idMember", "customerId", "idCliente"]);
   const contractId = deepFindString(payload, ["contractId", "idContract", "idContrato"]);
-  if (memberId) {
-    await invalidateCachePrefix(`member:${memberId}`);
-    await invalidateCachePrefix(`contracts:${memberId}`);
-  }
-  if (contractId) await invalidateCachePrefix(`contract:${contractId}`);
+  if (memberId) await invalidateMember(memberId);
+  if (contractId) await invalidateContract(contractId);
 
   await prisma.evoWebhookEvent.update({ where: { eventIdHash }, data: { processedAt: new Date() } });
   return Response.json({ ok: true });
