@@ -1,5 +1,6 @@
 import { getCached, setCached } from "./cache";
 import { recordEvoHit } from "./usage";
+import { evoAuthHeaders } from "./credentials";
 import type { EvoAdapter } from "./adapter";
 import type { EvoCancelResult, EvoContract, EvoCustomer, EvoPaymentMethodResult } from "./types";
 
@@ -26,24 +27,7 @@ function pathFromEnv(name: string, params: Record<string, string>): string {
   });
 }
 
-function authHeaders(): Record<string, string> {
-  const token = process.env.EVO_API_TOKEN?.trim();
-  if (!token) throw new Error("EVO_API_TOKEN_NOT_CONFIGURED");
-  const mode = process.env.EVO_AUTH_MODE || "basic";
-  if (mode === "basic") {
-    const username = process.env.EVO_API_USERNAME?.trim();
-    if (!username) throw new Error("EVO_API_USERNAME_NOT_CONFIGURED");
-    return { Authorization: `Basic ${Buffer.from(`${username}:${token}`).toString("base64")}` };
-  }
-  if (mode === "header") {
-    const header = (process.env.EVO_TOKEN_HEADER || "x-api-key").toLowerCase();
-    if (!/^[a-z0-9-]+$/.test(header)) throw new Error("EVO_TOKEN_HEADER_INVALID");
-    return { [header]: token };
-  }
-  return { Authorization: `Bearer ${token}` };
-}
-
-async function evoFetch(path: string, init: RequestInit = {}) {
+async function evoFetch(path: string, init: RequestInit = {}, profileOrUnit?: string) {
   const base = baseUrl();
   const target = new URL(path, base);
   if (target.origin !== base.origin) throw new Error("EVO_SSRF_BLOCKED");
@@ -63,7 +47,7 @@ async function evoFetch(path: string, init: RequestInit = {}) {
       headers: {
         Accept: "application/json",
         "Content-Type": "application/json",
-        ...authHeaders(),
+        ...evoAuthHeaders(profileOrUnit),
         ...(init.headers || {})
       }
     });
@@ -182,31 +166,39 @@ function arrayPayload(raw: unknown): unknown[] {
 }
 
 export class HttpEvoAdapter implements EvoAdapter {
+  private readonly profileOrUnit?: string;
+  private readonly cachePrefix: string;
+
+  constructor(profileOrUnit?: string) {
+    this.profileOrUnit = profileOrUnit;
+    this.cachePrefix = (profileOrUnit || "DEFAULT").trim().toUpperCase();
+  }
+
   async findCustomerById(memberId: string): Promise<EvoCustomer | null> {
-    const cacheKey = `member:${memberId}`;
+    const cacheKey = `${this.cachePrefix}:member:${memberId}`;
     const cached = await getCached<EvoCustomer>(cacheKey);
     if (cached) return cached;
-    const raw = await evoFetch(pathFromEnv("EVO_MEMBER_BY_ID_PATH", { id: memberId, memberId }));
+    const raw = await evoFetch(pathFromEnv("EVO_MEMBER_BY_ID_PATH", { id: memberId, memberId }), {}, this.profileOrUnit);
     const customer = mapCustomer(raw);
     if (customer) await setCached(cacheKey, customer, 900);
     return customer;
   }
 
   async listContracts(customerExternalId: string): Promise<EvoContract[]> {
-    const cacheKey = `contracts:${customerExternalId}`;
+    const cacheKey = `${this.cachePrefix}:contracts:${customerExternalId}`;
     const cached = await getCached<EvoContract[]>(cacheKey);
     if (cached) return cached;
-    const raw = await evoFetch(pathFromEnv("EVO_CONTRACTS_BY_MEMBER_PATH", { id: customerExternalId, memberId: customerExternalId }));
+    const raw = await evoFetch(pathFromEnv("EVO_CONTRACTS_BY_MEMBER_PATH", { id: customerExternalId, memberId: customerExternalId }), {}, this.profileOrUnit);
     const contracts = arrayPayload(raw).map(item => mapContract(item, customerExternalId)).filter((v): v is EvoContract => Boolean(v));
     await setCached(cacheKey, contracts, 600);
     return contracts;
   }
 
   async getContract(contractExternalId: string): Promise<EvoContract | null> {
-    const cacheKey = `contract:${contractExternalId}`;
+    const cacheKey = `${this.cachePrefix}:contract:${contractExternalId}`;
     const cached = await getCached<EvoContract>(cacheKey);
     if (cached) return cached;
-    const raw = await evoFetch(pathFromEnv("EVO_CONTRACT_BY_ID_PATH", { id: contractExternalId, contractId: contractExternalId }));
+    const raw = await evoFetch(pathFromEnv("EVO_CONTRACT_BY_ID_PATH", { id: contractExternalId, contractId: contractExternalId }), {}, this.profileOrUnit);
     const contract = mapContract(obj(raw).data || raw);
     if (contract) await setCached(cacheKey, contract, 600);
     return contract;
@@ -237,7 +229,7 @@ export class HttpEvoAdapter implements EvoAdapter {
       method,
       headers: { "Idempotency-Key": protocol },
       body
-    });
+    }, this.profileOrUnit);
     const data = obj(raw);
     return {
       operationId: asString(pick(data, "operationId", "id", "requestId", "protocol")),
@@ -257,7 +249,7 @@ export class HttpEvoAdapter implements EvoAdapter {
       method,
       headers: { "Idempotency-Key": `${protocol}-payment-method` },
       body: method === "PUT" ? JSON.stringify({ active: false, removeCard: true, protocol }) : undefined
-    });
+    }, this.profileOrUnit);
     const data = obj(raw);
     return { removed: true, operationId: asString(pick(data, "operationId", "id", "requestId")) };
   }
