@@ -28,6 +28,7 @@ enum RequestStatus {
 }
 
 enum UserRole {
+  OWNER
   ATTENDANCE
   ANALYST
   FINANCE
@@ -37,23 +38,33 @@ enum UserRole {
 }
 
 model User {
-  id        String   @id @default(cuid())
-  name      String
-  email     String   @unique
-  role      UserRole
-  unit      String?
-  active    Boolean  @default(true)
-  createdAt DateTime @default(now())
-  events    AuditEvent[]
+  id             String   @id @default(cuid())
+  name           String
+  email          String   @unique
+  username       String?  @unique
+  passwordHash   String?
+  role           UserRole
+  unit           String?
+  active         Boolean  @default(true)
+  sessionVersion Int      @default(1)
+  createdBy      String?
+  lastLoginAt    DateTime?
+  disabledAt     DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  events         AuditEvent[]
+
+  @@index([active, role])
 }
 
-// LGPD: CPF nunca é salvo em texto puro. Quando vier do EVO para emissão do termo oficial,
-// ele fica cifrado; o ID do EVO também fica pseudonimizado/cifrado.
+// LGPD: identificadores oficiais ficam pseudonimizados/cifrados e nunca são enviados ao frontend
+// sem necessidade operacional. CPF/e-mail completos ficam cifrados somente quando necessários ao fluxo.
 model Customer {
   id                   String   @id @default(cuid())
   externalIdHash       String?  @unique
   externalIdCiphertext String?
   cpfCiphertext        String?
+  emailCiphertext      String?
   displayName          String
   contactHint          String?
   createdAt            DateTime @default(now())
@@ -120,43 +131,48 @@ model IdentityChallenge {
 }
 
 model CancellationRequest {
-  id                   String        @id @default(cuid())
-  protocol             String        @unique
-  activeKey            String?       @unique
-  customerId           String
-  contractId           String
-  unit                 String
-  reasonCode           String
-  reasonDetails        String?
-  desiredDate          DateTime
-  status               RequestStatus @default(SENT)
-  slaDueAt             DateTime?
-  currentOwner         String?
-  termVersion          String
-  termAcceptedAt       DateTime
-  termGeneratedAt      DateTime?
-  signedTermReceivedAt DateTime?
-  submittedAt          DateTime?
-  requesterAddress     String?
-  requesterRg          String?
-  contactEmail         String?
-  pixKey               String?
-  privacyConsentVersion String?
-  privacyConsentAt     DateTime?
-  cancellationFee      Decimal       @default(0) @db.Decimal(12, 2)
-  cancellationFeePaidAt DateTime?
+  id                         String        @id @default(cuid())
+  protocol                   String        @unique
+  activeKey                  String?       @unique
+  customerId                 String
+  contractId                 String
+  unit                       String
+  reasonCode                 String
+  reasonDetails              String?
+  desiredDate                DateTime
+  status                     RequestStatus @default(SENT)
+  slaDueAt                   DateTime?
+  currentOwner               String?
+  termVersion                String
+  termAcceptedAt             DateTime
+  termGeneratedAt            DateTime?
+  signedTermReceivedAt       DateTime?
+  submittedAt                DateTime?
+  // Campos legados permanecem para compatibilidade; novos pedidos usam somente os Ciphertext.
+  requesterAddress           String?
+  requesterRg                String?
+  contactEmail               String?
+  pixKey                     String?
+  requesterAddressCiphertext String?
+  requesterRgCiphertext      String?
+  contactEmailCiphertext     String?
+  pixKeyCiphertext           String?
+  privacyConsentVersion      String?
+  privacyConsentAt           DateTime?
+  cancellationFee            Decimal       @default(0) @db.Decimal(12, 2)
+  cancellationFeePaidAt      DateTime?
   paymentMethodRemovalStatus String?
-  evoOperationId       String?
-  evoLastErrorCode     String?
-  evoLastAttemptAt     DateTime?
-  createdAt            DateTime      @default(now())
-  updatedAt            DateTime      @updatedAt
-  customer             Customer      @relation(fields: [customerId], references: [id])
-  contract             Contract      @relation(fields: [contractId], references: [id])
-  calculations         RefundCalculation[]
-  refund               Refund?
-  attachments          Attachment[]
-  events               AuditEvent[]
+  evoOperationId             String?
+  evoLastErrorCode           String?
+  evoLastAttemptAt           DateTime?
+  createdAt                  DateTime      @default(now())
+  updatedAt                  DateTime      @updatedAt
+  customer                   Customer      @relation(fields: [customerId], references: [id])
+  contract                   Contract      @relation(fields: [contractId], references: [id])
+  calculations               RefundCalculation[]
+  refund                     Refund?
+  attachments                Attachment[]
+  events                     AuditEvent[]
 
   @@index([unit, status])
   @@index([contractId, status])
@@ -205,8 +221,6 @@ model Refund {
   request        CancellationRequest @relation(fields: [requestId], references: [id])
 }
 
-// Upload público não é habilitado. Comprovantes administrativos devem entrar por storage
-// privado e, antes de ficarem disponíveis, passar por validação de tipo + antivírus.
 model Attachment {
   id            String   @id @default(cuid())
   requestId     String
@@ -241,6 +255,16 @@ model AuditEvent {
 
   @@index([entity, entityId])
   @@index([createdAt])
+}
+
+// Rate limit persistente para não depender apenas da memória de uma instância.
+model SecurityThrottle {
+  keyHash   String   @id
+  count     Int      @default(0)
+  resetAt   DateTime
+  updatedAt DateTime @updatedAt
+
+  @@index([resetAt])
 }
 
 model EvoApiUsage {
