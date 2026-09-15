@@ -16,6 +16,7 @@ jobs:
           node-version: 22
       - run: npm install --no-audit --no-fund
       - run: npm run security:check
+      - run: npm run business:check
       - run: npm run typecheck
       - run: npm audit --omit=dev --audit-level=high
       - run: npm run build
