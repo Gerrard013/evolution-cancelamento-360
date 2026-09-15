@@ -79,15 +79,17 @@ export async function POST(req: Request) {
           contractId: contract.id,
           unit: contract.unit,
           reasonCode: input.reasonCode,
-          reasonDetails: input.reasonDetails || null,
+          reasonDetails: null,
+          reasonDetailsCiphertext: input.reasonDetails?.trim() ? encryptText(input.reasonDetails.trim()) : null,
           desiredDate: input.desiredDate,
           status: "AWAITING_SIGNATURE",
           slaDueAt: new Date(now.getTime() + slaHours * 60 * 60 * 1000),
           termVersion,
           termAcceptedAt: now,
           termGeneratedAt: now,
-          requesterAddress: input.requesterAddress,
-          rgCiphertext: encryptText(input.rg),
+          requesterAddress: null,
+          requesterAddressCiphertext: encryptText(input.requesterAddress.trim()),
+          rgCiphertext: encryptText(input.rg.trim()),
           cpfLast4: cpf.slice(-4),
           verifiedEmailMask: challenge.emailMask,
           identityVerifiedAt: challenge.verifiedAt,
@@ -96,7 +98,8 @@ export async function POST(req: Request) {
           lgpdConsentAt: challenge.consentAcceptedAt,
           sourceChannel: "OFFICIAL_PORTAL",
           contactEmail: null,
-          pixKey: input.pixKey?.trim() || null,
+          pixKey: null,
+          pixKeyCiphertext: input.pixKey?.trim() ? encryptText(input.pixKey.trim()) : null,
           refundDueAt,
           cancellationFee: preview.kind === "RECURRING" && preview.feeRequired ? preview.feeAmount : 0
         }
@@ -129,7 +132,8 @@ export async function POST(req: Request) {
             verifiedEmailMask: challenge.emailMask,
             lgpdConsentVersion: challenge.consentVersion,
             refundDueAt: refundDueAt?.toISOString() || null,
-            financialCheck: financial.sourceAvailable ? "EVO_CHECKED" : "NOT_CONFIGURED"
+            financialCheck: financial.sourceAvailable ? "EVO_CHECKED" : "NOT_CONFIGURED",
+            protectedFields: ["cpf", "rg", "email", "address", "pix", "reasonDetails"]
           },
           ...fingerprint
         }
