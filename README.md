@@ -1,69 +1,94 @@
-# Evolution Cancelamento 360 — Final Operacional v6
+# Evolution Cancelamento 360 — v7 Final Ruy
 
-Canal digital oficial de cancelamento da Evolution Academia para as unidades **Condor** e **Umarizal**. O objetivo é retirar o cancelamento do e-mail e reduzir atendimentos presenciais: o aluno solicita pelo próprio portal e a equipe acompanha a execução no painel administrativo.
+Canal digital de cancelamento da **Evolution Academia** para Condor e Umarizal, integrado ao **EVO/W12**.
 
-## Fluxo do aluno
+## Arquitetura aprovada
 
-1. Informa **matrícula EVO + data de nascimento**. Não usa CPF.
-2. O sistema consulta o EVO/W12 e mostra somente contratos ativos daquele aluno.
-3. O aluno escolhe o contrato, informa motivo e data do cancelamento.
-4. O sistema apresenta os valores aplicáveis.
-5. Gera o termo de cancelamento em PDF.
-6. O aluno assina e faz upload do termo no próprio portal.
-7. Recebe protocolo.
-8. Pode voltar ao início e usar **Consultar protocolo** para acompanhar o pedido.
+**EVO/W12 é a fonte oficial** de aluno, e-mail, contrato, plano, situação financeira e cancelamento do contrato. O **Cancelamento 360** registra somente o fluxo que a API do EVO não oferece: validação de identidade, aceite/ciência LGPD, motivo, PIX, termo, assinatura, protocolo, auditoria e acompanhamento de estorno.
 
-## Plano anual — regra operacional
+O suporte EVO informou que a API documentada **não oferece** criação de protocolo administrativo, PDF, campos personalizados, dashboard ou relatório nativo alimentado pelo 360. Por isso o painel do 360 é operacional; o resultado oficial do cancelamento é refletido no EVO pela operação de cancelamento do contrato.
+
+## Fluxo do cliente
+
+1. Acessa o link **Cancelar plano** no site oficial da academia.
+2. Informa **CPF + o mesmo e-mail cadastrado no EVO/W12**.
+3. Aceita a ciência/autorização de tratamento de dados para este fluxo.
+4. O backend consulta o EVO pelo CPF e compara o e-mail informado com o e-mail oficial retornado.
+5. O sistema envia um **código OTP de 6 dígitos** ao e-mail cadastrado, via SMTP do domínio da academia.
+6. Somente após o código correto o cliente vê seus contratos ativos.
+7. O sistema consulta contrato, plano e situação financeira no EVO.
+8. Cliente informa motivo e data; o 360 apresenta as condições e valores.
+9. Para o termo oficial, informa RG, endereço e, quando houver estorno, PIX. O CPF já vem da identidade validada no EVO.
+10. O 360 gera o termo conforme os modelos oficiais, cria protocolo e registra a trilha de auditoria.
+11. Cliente assina e envia o termo pelo próprio portal.
+12. A equipe autorizada conclui o cancelamento; a escrita no EVO só é habilitada após homologação segura do endpoint/payload.
+13. O cliente recebe confirmação do protocolo pelo e-mail oficial.
+
+## Segurança e controle do Ruy
+
+- Ruy usa o perfil **OWNER**.
+- Apenas OWNER pode criar, reativar ou revogar acessos da equipe.
+- O perfil proprietário não pode ser removido pela própria tela de gestão.
+- CPF, RG, e-mail e IDs externos necessários ao fluxo são cifrados/pseudonimizados no banco.
+- O código OTP nunca é salvo em texto puro; somente HMAC.
+- Tokens EVO, senha SMTP, chaves de criptografia e peppers ficam somente nas Variables do Railway.
+- Cookies de sessão são HTTP-only, SameSite Strict e Secure em produção.
+- Endpoints públicos têm rate limiting e validação de origem.
+- Ações relevantes geram eventos de auditoria.
+- Escrita destrutiva no EVO é **fail-closed**: sem homologação e flags explícitas, o sistema não cancela contrato automaticamente.
+
+## Termos oficiais
+
+Os modelos originais ficam em `docs/templates-original/`.
+
+### Plano anual
+
+O termo mantém as cláusulas 21, 22 e 23 fornecidas pela academia. A memória de cálculo usa:
 
 - valor mensal = valor total do plano ÷ 12;
-- meses utilizados = meses de calendário entre o mês de início e o mês do pedido, contando os dois meses;
 - meses restantes = 12 − meses utilizados;
 - saldo restante = valor mensal × meses restantes;
 - desconto de antecipação = **14,4% do valor total**;
 - multa/taxa = **10% do valor total**;
 - estorno = `máximo(0, saldo restante − 14,4% − 10%)`.
 
-Exemplo confirmado no projeto: plano de R$ 1.200,00, início em 30/12/2025 e cancelamento em 13/09/2026. São 10 meses considerados utilizados e 2 restantes. Valor mensal de R$ 100,00; saldo restante R$ 200,00; 14,4% = R$ 172,80; 10% = R$ 120,00; estorno final = **R$ 0,00**.
+Quando houver estorno, o termo registra PIX e o prazo operacional informado pela academia de **até 60 dias úteis**. O sistema não apresenta esse prazo como “lei” porque o documento fornecido não cita base legal específica.
 
-> O percentual implementado é 14,4%, conforme o termo anual fornecido. Por isso, em R$ 1.200,00 o valor correto é R$ 172,80.
+### Plano anual recorrente
 
-## Plano recorrente
+- termo próprio da academia;
+- multa de **R$ 258,00** conforme documento fornecido;
+- observação de solicitação com 30 dias de antecedência da próxima mensalidade;
+- não há estorno no fluxo recorrente atual.
 
-- não existe estorno;
-- antes de completar 12 meses: taxa de cancelamento de **R$ 258,00**;
-- com 12 meses ou mais: sem taxa antecipada;
-- após a taxa ser confirmada, quando aplicável, o contrato segue para cancelamento;
-- após o cancelamento, a forma de pagamento/cartão recorrente pode ser removida automaticamente pelo EVO quando o endpoint de escrita estiver homologado.
+## EVO/W12 — confirmado pelo suporte
 
-## Painel da equipe
+- autenticação: **Basic Auth** (DNS/usuário + token);
+- busca de membro: `GET /api/v1/members`, com suporte informado para CPF/e-mail;
+- contrato: entidade `MemberMembership`;
+- resumo: `get-summary-of-membermemberships-by-id`;
+- financeiro: entidade `Invoices`;
+- cancelamento: `POST /cancel-membermembership`;
+- webhooks: API Pro.
 
-Gerrard e Ruy possuem acessos separados. O painel mostra pedidos, termo assinado, comprovante da taxa, status, valor de estorno, confirmação de taxa, execução do cancelamento e registro do estorno.
+### Importante
 
-Existe também um atendimento assistido: a equipe localiza o aluno pela matrícula e abre o formulário no mesmo aparelho. Nenhum link ou código é exibido ao aluno.
+O suporte ainda não forneceu nesta conversa a especificação completa de **query params/body** dos endpoints acima. Por isso os paths e payloads são configuráveis por environment variables e `npm run production:check` bloqueia produção até os parâmetros críticos serem preenchidos e a escrita ter sido homologada.
 
-## API EVO/W12
+Nunca cole o token EVO ou a senha SMTP em issue, PR, código ou chat. Coloque-os diretamente no Railway.
 
-O código já está preparado para `manual`, `read` e `write`.
+## Domínio e SMTP
 
-- `read`: aluno/ID, contratos, unidade, plano, datas e valor do contrato;
-- `write`: cancelamento do contrato;
-- remoção de pagamento: endpoint separado para retirar cartão/forma recorrente após o cancelamento.
+Recomendado:
 
-Os **paths reais** precisam ser copiados da documentação/homologação EVO. O projeto não inventa endpoint destrutivo.
+- `https://cancelamento.dominio-da-academia.com.br` → aplicação 360;
+- `cancelamento@dominio-da-academia.com.br` → comunicação oficial;
+- SPF, DKIM e DMARC configurados no DNS;
+- site oficial da academia inclui o botão/link **Cancelar plano** para o subdomínio.
 
-Documentação informada pelo suporte: `https://api.abcevo.com/`.
+## Produção
 
-## Railway
-
-A aplicação precisa receber:
-
-```env
-DATABASE_URL=${{Postgres.DATABASE_URL}}
-```
-
-O Docker executa `prisma db push` antes de iniciar. Todas as credenciais EVO e chaves de segurança ficam somente nas Variables do Railway.
-
-## Verificações
+Copie `.env.example` para a configuração de ambiente e preencha somente no Railway. Antes de ativar escrita EVO:
 
 ```bash
 npm run security:check
@@ -73,4 +98,10 @@ npm run typecheck
 npm run build
 ```
 
-Consulte `docs/FINAL_RUNBOOK.md` e `docs/API_EVO_CONFIG_AGORA.md` para implantação.
+`production:check` exige domínio HTTPS, SMTP, OWNER, CPF/EVO, invoices, payload de cancelamento e homologação explícita antes do modo destrutivo.
+
+## Estado de implantação
+
+Código v7: pronto para validação técnica e CI.
+
+Produção: depende de 4 itens externos da academia/EVO: **domínio/subdomínio**, **SMTP**, **credencial EVO criada pelo Ruy** e **especificação/homologação dos parâmetros exatos de Invoices e cancel-membermembership**.

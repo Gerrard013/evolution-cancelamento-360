@@ -1,7 +1,9 @@
 import { getCached, setCached } from "./cache";
 import { recordEvoHit } from "./usage";
 import type { EvoAdapter } from "./adapter";
-import type { EvoCancelResult, EvoContract, EvoCustomer, EvoPaymentMethodResult } from "./types";
+import type { EvoCancelResult, EvoContract, EvoCustomer, EvoInvoice, EvoPaymentMethodResult } from "./types";
+import { sha256 } from "@/lib/security/crypto";
+import { normalizeCpf } from "@/lib/identity/cpf";
 
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 
@@ -26,10 +28,16 @@ function pathFromEnv(name: string, params: Record<string, string>): string {
   });
 }
 
+function optionalPathFromEnv(name: string, params: Record<string, string>): string | null {
+  const template = process.env[name]?.trim();
+  if (!template) return null;
+  return pathFromEnv(name, params);
+}
+
 function authHeaders(): Record<string, string> {
   const token = process.env.EVO_API_TOKEN?.trim();
   if (!token) throw new Error("EVO_API_TOKEN_NOT_CONFIGURED");
-  const mode = process.env.EVO_AUTH_MODE || "bearer";
+  const mode = process.env.EVO_AUTH_MODE || "basic";
   if (mode === "basic") {
     const username = process.env.EVO_API_USERNAME?.trim();
     if (!username) throw new Error("EVO_API_USERNAME_NOT_CONFIGURED");
@@ -94,6 +102,11 @@ function obj(input: unknown): Record<string, unknown> {
   return input && typeof input === "object" && !Array.isArray(input) ? input as Record<string, unknown> : {};
 }
 
+function pick(data: Record<string, unknown>, ...keys: string[]): unknown {
+  for (const key of keys) if (data[key] !== undefined && data[key] !== null) return data[key];
+  return undefined;
+}
+
 function asEntityName(value: unknown): string | undefined {
   const direct = asString(value);
   if (direct) return direct;
@@ -121,9 +134,20 @@ function firstPayloadObject(raw: unknown): Record<string, unknown> {
   return root;
 }
 
-function pick(data: Record<string, unknown>, ...keys: string[]): unknown {
-  for (const key of keys) if (data[key] !== undefined && data[key] !== null) return data[key];
-  return undefined;
+function addressString(value: unknown): string | undefined {
+  const direct = asString(value)?.trim();
+  if (direct) return direct;
+  const data = obj(value);
+  const pieces = [
+    asString(pick(data, "street", "logradouro", "address", "endereco")),
+    asString(pick(data, "number", "numero")),
+    asString(pick(data, "complement", "complemento")),
+    asString(pick(data, "neighborhood", "bairro")),
+    asString(pick(data, "city", "cidade")),
+    asString(pick(data, "state", "uf", "estado")),
+    asString(pick(data, "zipCode", "cep"))
+  ].filter(Boolean);
+  return pieces.length ? pieces.join(", ") : undefined;
 }
 
 function mapCustomer(raw: unknown): EvoCustomer | null {
@@ -132,17 +156,20 @@ function mapCustomer(raw: unknown): EvoCustomer | null {
   if (!id) return null;
   const name = asString(pick(data, "name", "nome", "fullName", "nomeCompleto")) || "Cliente";
   const phone = asString(pick(data, "phone", "telefone", "mobile", "celular", "phoneNumber"));
-  const email = asString(pick(data, "email"));
+  const email = asString(pick(data, "email", "emailAddress", "mail"))?.trim().toLowerCase();
+  const document = asString(pick(data, "cpf", "CPF", "document", "documentNumber", "documento", "taxId"));
+  const rg = asString(pick(data, "rg", "RG", "identityDocument", "documentRg"));
+  const address = addressString(pick(data, "address", "endereco", "residentialAddress", "homeAddress"));
   const birthDate = normalizeDateString(pick(data, "birthDate", "dateOfBirth", "dataNascimento", "birth_date", "birthday", "data_nascimento"));
   const digits = phone?.replace(/\D/g, "") || "";
   const phoneLast4 = digits.length >= 4 ? digits.slice(-4) : undefined;
-  const hint = phoneLast4 ? `•••• ${phoneLast4}` : email ? email.replace(/^(.).+(@.*)$/, "$1•••$2") : undefined;
-  return { externalId: id, name, contactHint: hint, birthDate, phoneLast4 };
+  const hint = email ? email.replace(/^(.).+(@.*)$/, "$1•••$2") : phoneLast4 ? `•••• ${phoneLast4}` : undefined;
+  return { externalId: id, name, email, document, rg, address, contactHint: hint, birthDate, phoneLast4 };
 }
 
 function mapContract(raw: unknown, fallbackCustomerId?: string): EvoContract | null {
   const data = obj(raw);
-  const id = asString(pick(data, "id", "externalId", "contractId", "idContract", "idContrato"));
+  const id = asString(pick(data, "id", "externalId", "contractId", "idContract", "idContrato", "idMemberMembership"));
   const customerId = asString(pick(data, "customerExternalId", "memberId", "idMember", "customerId", "idCliente")) || fallbackCustomerId;
   if (!id || !customerId) return null;
   return {
@@ -161,15 +188,32 @@ function mapContract(raw: unknown, fallbackCustomerId?: string): EvoContract | n
   };
 }
 
+function mapInvoice(raw: unknown, fallbackCustomerId?: string): EvoInvoice | null {
+  const data = obj(raw);
+  const amount = asNumber(pick(data, "amount", "value", "valor", "total", "totalAmount"));
+  const status = String(pick(data, "status", "situacao", "state") || "UNKNOWN");
+  const normalized = status.toUpperCase();
+  const open = !["PAID", "PAGO", "PAGA", "SETTLED", "CANCELLED", "CANCELED", "CANCELADA", "CANCELADO"].some(x => normalized.includes(x));
+  return {
+    externalId: asString(pick(data, "id", "invoiceId", "idInvoice", "idReceivable")),
+    customerExternalId: asString(pick(data, "memberId", "idMember", "customerId", "idCliente")) || fallbackCustomerId,
+    contractExternalId: asString(pick(data, "contractId", "idMemberMembership", "membershipId")),
+    dueDate: normalizeDateString(pick(data, "dueDate", "dataVencimento", "maturityDate")),
+    amount,
+    status,
+    open
+  };
+}
+
 function arrayPayload(raw: unknown): unknown[] {
   if (Array.isArray(raw)) return raw;
   const data = obj(raw);
-  for (const key of ["data", "items", "results", "contracts", "contratos", "memberships", "membershipsContracts"]) {
+  for (const key of ["data", "items", "results", "contracts", "contratos", "memberships", "membershipsContracts", "invoices", "receivables"]) {
     const value = data[key];
     if (Array.isArray(value)) return value;
     if (value && typeof value === "object") {
       const nested = obj(value);
-      for (const nestedKey of ["items", "results", "contracts", "contratos", "data"]) {
+      for (const nestedKey of ["items", "results", "contracts", "contratos", "data", "invoices", "receivables"]) {
         if (Array.isArray(nested[nestedKey])) return nested[nestedKey] as unknown[];
       }
     }
@@ -177,9 +221,21 @@ function arrayPayload(raw: unknown): unknown[] {
   return [];
 }
 
+function renderCancelBody(contractExternalId: string, protocol: string): string | undefined {
+  const template = process.env.EVO_CANCEL_BODY_TEMPLATE?.trim();
+  if (!template) {
+    return JSON.stringify({ idMemberMembership: contractExternalId, protocol });
+  }
+  const rendered = template
+    .replaceAll("{contractId}", contractExternalId)
+    .replaceAll("{protocol}", protocol);
+  JSON.parse(rendered);
+  return rendered;
+}
+
 export class HttpEvoAdapter implements EvoAdapter {
   async findCustomerById(memberId: string): Promise<EvoCustomer | null> {
-    const cacheKey = `member:${memberId}`;
+    const cacheKey = `member:${sha256(memberId)}`;
     const cached = await getCached<EvoCustomer>(cacheKey);
     if (cached) return cached;
     const raw = await evoFetch(pathFromEnv("EVO_MEMBER_BY_ID_PATH", { id: memberId, memberId }));
@@ -188,35 +244,62 @@ export class HttpEvoAdapter implements EvoAdapter {
     return customer;
   }
 
+  async findCustomerByCpf(cpf: string): Promise<EvoCustomer | null> {
+    const normalized = normalizeCpf(cpf);
+    if (normalized.length !== 11) return null;
+    const cacheKey = `member-cpf:${sha256(normalized)}`;
+    const cached = await getCached<EvoCustomer>(cacheKey);
+    if (cached) return cached;
+    const raw = await evoFetch(pathFromEnv("EVO_MEMBER_BY_CPF_PATH", { cpf: normalized, document: normalized }));
+    const customer = mapCustomer(raw);
+    if (!customer) return null;
+    const returnedCpf = normalizeCpf(customer.document || "");
+    if (returnedCpf && returnedCpf !== normalized) return null;
+    await setCached(cacheKey, customer, 300);
+    return customer;
+  }
+
   async listContracts(customerExternalId: string): Promise<EvoContract[]> {
-    const cacheKey = `contracts:${customerExternalId}`;
+    const cacheKey = `contracts:${sha256(customerExternalId)}`;
     const cached = await getCached<EvoContract[]>(cacheKey);
     if (cached) return cached;
     const raw = await evoFetch(pathFromEnv("EVO_CONTRACTS_BY_MEMBER_PATH", { id: customerExternalId, memberId: customerExternalId }));
     const contracts = arrayPayload(raw).map(item => mapContract(item, customerExternalId)).filter((v): v is EvoContract => Boolean(v));
-    await setCached(cacheKey, contracts, 600);
+    await setCached(cacheKey, contracts, 300);
     return contracts;
   }
 
   async getContract(contractExternalId: string): Promise<EvoContract | null> {
-    const cacheKey = `contract:${contractExternalId}`;
+    const cacheKey = `contract:${sha256(contractExternalId)}`;
     const cached = await getCached<EvoContract>(cacheKey);
     if (cached) return cached;
     const raw = await evoFetch(pathFromEnv("EVO_CONTRACT_BY_ID_PATH", { id: contractExternalId, contractId: contractExternalId }));
     const contract = mapContract(obj(raw).data || raw);
-    if (contract) await setCached(cacheKey, contract, 600);
+    if (contract) await setCached(cacheKey, contract, 300);
     return contract;
+  }
+
+  async listInvoices(customerExternalId: string): Promise<EvoInvoice[]> {
+    const path = optionalPathFromEnv("EVO_INVOICES_BY_MEMBER_PATH", { id: customerExternalId, memberId: customerExternalId });
+    if (!path) return [];
+    const cacheKey = `invoices:${sha256(customerExternalId)}`;
+    const cached = await getCached<EvoInvoice[]>(cacheKey);
+    if (cached) return cached;
+    const raw = await evoFetch(path);
+    const invoices = arrayPayload(raw).map(item => mapInvoice(item, customerExternalId)).filter((v): v is EvoInvoice => Boolean(v));
+    await setCached(cacheKey, invoices, 120);
+    return invoices;
   }
 
   async cancelContract(contractExternalId: string, protocol: string): Promise<EvoCancelResult> {
     if (process.env.EVO_INTEGRATION_MODE !== "write" || process.env.EVO_WRITE_ENABLED !== "true") throw new Error("EVO_WRITE_DISABLED");
     const path = pathFromEnv("EVO_CANCEL_CONTRACT_PATH", { id: contractExternalId, contractId: contractExternalId });
-    const method = (process.env.EVO_CANCEL_METHOD || "DELETE").toUpperCase();
-    if (!["DELETE", "PUT"].includes(method)) throw new Error("EVO_CANCEL_METHOD_INVALID");
+    const method = (process.env.EVO_CANCEL_METHOD || "POST").toUpperCase();
+    if (!["POST", "DELETE", "PUT"].includes(method)) throw new Error("EVO_CANCEL_METHOD_INVALID");
     const raw = await evoFetch(path, {
       method,
       headers: { "Idempotency-Key": protocol },
-      body: method === "PUT" ? JSON.stringify({ status: "cancelled", protocol }) : undefined
+      body: method === "DELETE" ? undefined : renderCancelBody(contractExternalId, protocol)
     });
     const data = obj(raw);
     return {
@@ -232,14 +315,13 @@ export class HttpEvoAdapter implements EvoAdapter {
     }
     const path = pathFromEnv("EVO_REMOVE_PAYMENT_METHOD_PATH", { id: contractExternalId, contractId: contractExternalId, memberId: customerExternalId, customerId: customerExternalId });
     const method = (process.env.EVO_REMOVE_PAYMENT_METHOD_METHOD || "DELETE").toUpperCase();
-    if (!["DELETE", "PUT"].includes(method)) throw new Error("EVO_REMOVE_PAYMENT_METHOD_METHOD_INVALID");
+    if (!["DELETE", "PUT", "POST"].includes(method)) throw new Error("EVO_REMOVE_PAYMENT_METHOD_METHOD_INVALID");
     const raw = await evoFetch(path, {
       method,
       headers: { "Idempotency-Key": `${protocol}-payment-method` },
-      body: method === "PUT" ? JSON.stringify({ active: false, removeCard: true, protocol }) : undefined
+      body: method === "DELETE" ? undefined : JSON.stringify({ active: false, removeCard: true, protocol })
     });
     const data = obj(raw);
     return { removed: true, operationId: asString(pick(data, "operationId", "id", "requestId")) };
   }
-
 }

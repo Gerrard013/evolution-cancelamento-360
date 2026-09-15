@@ -1,5 +1,5 @@
 import type { EvoAdapter } from "./adapter";
-import type { EvoCancelResult, EvoContract, EvoCustomer, EvoPaymentMethodResult } from "./types";
+import type { EvoCancelResult, EvoContract, EvoCustomer, EvoInvoice, EvoPaymentMethodResult } from "./types";
 import { HttpEvoAdapter } from "./http-adapter";
 import { recordEvoHit } from "./usage";
 
@@ -20,9 +20,6 @@ function str(value: unknown) {
 function num(value: unknown) {
   const n = Number(value);
   return Number.isFinite(n) ? n : 0;
-}
-function bool(value: unknown) {
-  return value === true || value === 1 || value === "1" || String(value).toLowerCase() === "true";
 }
 function dateOf(value: unknown) {
   const raw = str(value)?.trim();
@@ -107,7 +104,9 @@ function customerFromProfile(data: Record<string, unknown>): EvoCustomer | null 
   const lastName = str(data.lastName ?? data.last_name) || "";
   const name = `${firstName} ${lastName}`.trim() || str(data.name) || "Cliente";
   const birthDate = dateOf(data.birthDate ?? data.birth_date);
-  const email = str(data.email);
+  const email = str(data.email)?.trim().toLowerCase();
+  const document = str(data.cpf ?? data.document ?? data.documentNumber ?? data.taxId);
+  const rg = str(data.rg ?? data.identityDocument);
 
   let phoneLast4: string | undefined;
   const contacts = Array.isArray(data.contacts) ? data.contacts : [];
@@ -121,8 +120,8 @@ function customerFromProfile(data: Record<string, unknown>): EvoCustomer | null 
     }
   }
 
-  const contactHint = phoneLast4 ? `•••• ${phoneLast4}` : email ? email.replace(/^(.).+(@.*)$/, "$1•••$2") : undefined;
-  return { externalId, name, birthDate, phoneLast4, contactHint };
+  const contactHint = email ? email.replace(/^(.).+(@.*)$/, "$1•••$2") : phoneLast4 ? `•••• ${phoneLast4}` : undefined;
+  return { externalId, name, email, document, rg, birthDate, phoneLast4, contactHint };
 }
 
 function membershipStatus(value: unknown) {
@@ -186,12 +185,15 @@ export class ActiveClientsEvoAdapter implements EvoAdapter {
     return customerFromProfile(raw);
   }
 
+  findCustomerByCpf(cpf: string) { return this.fallback.findCustomerByCpf(cpf); }
+
   async listContracts(customerExternalId: string) {
     const raw = await memberProfileRaw(customerExternalId);
     return contractsFromProfile(raw, customerExternalId);
   }
 
   getContract(contractExternalId: string) { return this.fallback.getContract(contractExternalId); }
+  listInvoices(customerExternalId: string): Promise<EvoInvoice[]> { return this.fallback.listInvoices(customerExternalId); }
   cancelContract(contractExternalId: string, protocol: string): Promise<EvoCancelResult> { return this.fallback.cancelContract(contractExternalId, protocol); }
   removeStoredPaymentMethod(contractExternalId: string, customerExternalId: string, protocol: string): Promise<EvoPaymentMethodResult> { return this.fallback.removeStoredPaymentMethod(contractExternalId, customerExternalId, protocol); }
 }
