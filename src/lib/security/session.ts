@@ -11,6 +11,7 @@ export type SessionPayload = {
   sub: string;
   grantId?: string;
   role?: string;
+  sv?: number;
   exp: number;
   nonce: string;
 };
