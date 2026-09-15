@@ -4,14 +4,17 @@ import { prisma } from "@/lib/db/prisma";
 import { assertTrustedOrigin, readJsonLimited } from "@/lib/security/request";
 import { configuredLimit, enforceRateLimit } from "@/lib/security/rate-limit";
 import { encryptText, hmac } from "@/lib/security/crypto";
-import { findEvoMemberByEmail } from "@/lib/evo/member-lookup";
+import { findEvoMemberByCpf } from "@/lib/evo/member-lookup";
 import { sendIdentityCode } from "@/lib/security/mailer";
 
 const schema = z.object({
-  fullName: z.string().trim().min(5).max(160),
-  birthDate: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/),
-  email: z.string().trim().email().max(200)
+  cpf: z.string().trim().min(11).max(18),
+  birthDate: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/)
 });
+
+function normalizeCpf(value: string) {
+  return value.replace(/\D/g, "");
+}
 
 function normalizeName(value: string) {
   return value
@@ -29,8 +32,8 @@ function normalizeEmail(value: string) {
 function maskEmail(email: string) {
   const [local, domain] = email.split("@");
   if (!local || !domain) return "e-mail cadastrado";
-  const left = local.length <= 2 ? `${local[0] || "*"}*` : `${local.slice(0, 2)}${"*".repeat(Math.min(6, local.length - 2))}`;
-  return `${left}@${domain}`;
+  const visible = local.slice(0, Math.min(2, local.length));
+  return `${visible}${"*".repeat(Math.max(2, Math.min(6, local.length - visible.length)))}@${domain}`;
 }
 
 function publicIntegrationError(error: unknown) {
@@ -55,27 +58,32 @@ export async function POST(req: Request) {
     }
 
     const input = schema.parse(await readJsonLimited(req, 4096));
-    const email = normalizeEmail(input.email);
-    const suppliedName = normalizeName(input.fullName);
-    const member = await findEvoMemberByEmail(email);
+    const cpf = normalizeCpf(input.cpf);
+    if (cpf.length !== 11) return Response.json({ error: "Informe um CPF válido com 11 dígitos." }, { status: 400 });
 
-    const nameMatches = Boolean(member && normalizeName(member.name) === suppliedName);
+    const member = await findEvoMemberByCpf(cpf);
+    const cpfMatches = Boolean(member?.cpf && normalizeCpf(member.cpf) === cpf);
     const birthMatches = Boolean(member?.birthDate && member.birthDate === input.birthDate);
-    const emailMatches = Boolean(member && normalizeEmail(member.email) === email);
 
-    if (!member || !nameMatches || !birthMatches || !emailMatches) {
-      return Response.json({ error: "Não foi possível confirmar nome, data de nascimento e e-mail com o cadastro da Evolution." }, { status: 401 });
+    if (!member || !cpfMatches || !birthMatches) {
+      return Response.json({ error: "Não foi possível confirmar CPF e data de nascimento com o cadastro da Evolution." }, { status: 401 });
+    }
+
+    const email = normalizeEmail(member.email);
+    if (!email) {
+      return Response.json({ error: "Seu cadastro no EVO não possui um e-mail válido para confirmação. Procure a equipe Evolution." }, { status: 409 });
     }
 
     const code = String(crypto.randomInt(100000, 1000000));
     const ttlMinutes = Math.min(20, Math.max(3, Number(process.env.OTP_TTL_MINUTES || 10)));
+    const normalizedMemberName = normalizeName(member.name || "CLIENTE");
 
     await prisma.identityChallenge.deleteMany({ where: { expiresAt: { lt: new Date() } } }).catch(() => undefined);
 
     const challenge = await prisma.identityChallenge.create({
       data: {
         externalMemberIdCiphertext: encryptText(member.externalId),
-        nameHash: hmac(`name:${suppliedName}`, "IDENTITY_CODE_PEPPER"),
+        nameHash: hmac(`name:${normalizedMemberName}`, "IDENTITY_CODE_PEPPER"),
         birthDateHash: hmac(`birth:${input.birthDate}`, "IDENTITY_CODE_PEPPER"),
         emailHash: hmac(`email:${email}`, "IDENTITY_CODE_PEPPER"),
         codeHash: hmac(`otp:${code}`, "IDENTITY_CODE_PEPPER"),
@@ -98,7 +106,7 @@ export async function POST(req: Request) {
     });
   } catch (error) {
     if (error instanceof Response) return error;
-    if (error instanceof z.ZodError) return Response.json({ error: "Confira nome completo, data de nascimento e e-mail." }, { status: 400 });
+    if (error instanceof z.ZodError) return Response.json({ error: "Confira CPF e data de nascimento." }, { status: 400 });
     const mapped = publicIntegrationError(error);
     return Response.json({ error: mapped.error }, { status: mapped.status });
   }
