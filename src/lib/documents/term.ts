@@ -4,90 +4,117 @@ import { decryptText } from "@/lib/security/crypto";
 
 type TermData = { request: CancellationRequest; contract: Contract; customer: Customer; calculation?: RefundCalculation | null };
 
-function wrap(text: string, max = 92) {
+function wrap(text: string, max = 96) {
   const words = text.replace(/\s+/g, " ").trim().split(" ");
-  const lines: string[] = []; let line = "";
+  const lines: string[] = [];
+  let line = "";
   for (const word of words) {
-    if ((line + " " + word).trim().length > max) { if (line) lines.push(line); line = word; }
-    else line = (line + " " + word).trim();
+    if ((line + " " + word).trim().length > max) {
+      if (line) lines.push(line);
+      line = word;
+    } else line = (line + " " + word).trim();
   }
-  if (line) lines.push(line); return lines;
+  if (line) lines.push(line);
+  return lines;
 }
 
-function brl(value: number) {
-  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
+function safeDecrypt(ciphertext?: string | null, fallback?: string | null) {
+  if (ciphertext) {
+    try { return decryptText(ciphertext); } catch {}
+  }
+  return fallback?.trim() || "";
 }
 
-function memoryNumber(memory: unknown, key: string) {
-  if (!memory || typeof memory !== "object" || Array.isArray(memory)) return undefined;
-  const value = (memory as Record<string, unknown>)[key];
-  const n = Number(value);
-  return Number.isFinite(n) ? n : undefined;
+function reasonLabel(code: string, details?: string | null) {
+  const labels: Record<string,string> = {
+    MUDANCA: "Mudança",
+    FINANCEIRO: "Financeiro",
+    SAUDE: "Saúde",
+    HORARIO: "Horário",
+    ATENDIMENTO: "Atendimento",
+    OUTRO: "Outro"
+  };
+  const base = labels[code] || code;
+  return details ? `${base} — ${details}` : base;
 }
 
-export async function buildCancellationTerm({ request, contract, customer, calculation }: TermData) {
+export async function buildCancellationTerm({ request, contract, customer }: TermData) {
   const pdf = await PDFDocument.create();
   const page = pdf.addPage([595.28, 841.89]);
   const regular = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
-  const black = rgb(0.08,0.1,0.12), green = rgb(0.13,0.55,0.22), muted = rgb(0.35,0.4,0.43);
-  let y = 790;
-  const draw=(txt:string,size=10,font=regular,color=black,x=52)=>{page.drawText(txt,{x,y,size,font,color});y-=size+7};
-  const paragraph=(txt:string,size=9.5)=>{for(const line of wrap(txt,98))draw(line,size);y-=4};
-  const field=(label:string,value:string)=>{draw(label,8.5,bold,muted);draw(value||"Não informado",11,regular,black);y-=3};
+  const black = rgb(0.05,0.05,0.05);
+  const muted = rgb(0.35,0.35,0.35);
+  let y = 800;
 
-  page.drawRectangle({x:0,y:810,width:595.28,height:31.89,color:rgb(0.03,0.12,0.08)});
-  page.drawText("EVOLUTION ACADEMIA • CANAL OFICIAL DE CANCELAMENTO",{x:52,y:821,size:10,font:bold,color:rgb(0.82,1,0.84)});
-  y=784;
-  draw(contract.recurring?"PEDIDO DE CANCELAMENTO — PLANO RECORRENTE":"PEDIDO DE CANCELAMENTO — PLANO ANUAL",16,bold,green);
-  draw(`Protocolo: ${request.protocol}`,9,bold,muted);y-=8;
+  const draw = (txt:string,size=9.3,font=regular,x=48,color=black) => {
+    page.drawText(txt,{x,y,size,font,color});
+    y -= size + 4.5;
+  };
+  const paragraph = (txt:string,size=8.7,max=102) => {
+    for (const line of wrap(txt,max)) draw(line,size,regular,48,black);
+    y -= 3;
+  };
+  const field = (label:string,value:string) => paragraph(`${label} ${value || "________________________________________"}`,9.1,98);
 
-  field("ALUNO",customer.displayName);
-  let memberId="Identificador confirmado"; try{if(customer.externalIdCiphertext)memberId=decryptText(customer.externalIdCiphertext)}catch{}
-  field("MATRÍCULA / ID EVO",memberId);
-  field("UNIDADE",contract.unit);
-  field("PLANO",contract.planName);
-  field("INÍCIO DO CONTRATO",contract.startDate.toLocaleDateString("pt-BR"));
-  field("DATA DA SOLICITAÇÃO",request.createdAt.toLocaleDateString("pt-BR"));
-  field("ENDEREÇO",request.requesterAddress||"Não informado");
+  const memberId = safeDecrypt(customer.externalIdCiphertext, "");
+  const cpf = safeDecrypt(customer.cpfCiphertext, "");
+  const rg = safeDecrypt(request.requesterRgCiphertext, request.requesterRg);
+  const address = safeDecrypt(request.requesterAddressCiphertext, request.requesterAddress);
+  const pix = safeDecrypt(request.pixKeyCiphertext, request.pixKey);
+  const createdDate = request.createdAt.toLocaleDateString("pt-BR", { timeZone: "America/Belem" });
+  const startDate = contract.startDate.toLocaleDateString("pt-BR", { timeZone: "America/Belem" });
 
-  draw("SOLICITAÇÃO",10,bold,green);y-=2;
-  paragraph("Solicito o cancelamento do meu contrato com a EVOLUTION ACADEMIA e declaro estar ciente das condições aplicáveis ao meu plano e dos valores apresentados neste portal antes da emissão deste termo.");
-  field("MOTIVO",`${request.reasonCode}${request.reasonDetails?` — ${request.reasonDetails}`:""}`);
+  const title = contract.recurring ? "PEDIDO DE CANCELAMENTO (ANUAL RECORRENTE)" : "PEDIDO DE CANCELAMENTO";
+  page.drawText(title,{x:48,y,size:15,font:bold,color:black});
+  y -= 24;
+  draw(`PROTOCOLO DIGITAL: ${request.protocol}`,8.5,bold,48,muted);
+  y -= 4;
 
-  draw("CONDIÇÕES E VALORES",10,bold,green);y-=2;
-  if(contract.recurring){
-    if(Number(request.cancellationFee)>0) {
-      paragraph(`Plano recorrente sem estorno. Como o pedido ocorre antes de completar 12 meses de contrato, a taxa de cancelamento é de ${brl(Number(request.cancellationFee))}. Após a confirmação do pagamento, o contrato seguirá para cancelamento e a forma de pagamento recorrente será removida conforme a integração disponível no EVO/W12.`);
-    } else {
-      paragraph("Plano recorrente sem estorno. O contrato já completou 12 meses e não há taxa de cancelamento antecipado. O contrato seguirá para cancelamento e a forma de pagamento recorrente será removida conforme a integração disponível no EVO/W12.");
-    }
-  }else if(calculation){
-    const monthsUsed=memoryNumber(calculation.memory,"monthsUsed");
-    const monthsRemaining=memoryNumber(calculation.memory,"monthsRemaining");
-    const monthlyReference=memoryNumber(calculation.memory,"monthlyReference") ?? Number(calculation.eligibleBase)/12;
-    const advanceDeduction=memoryNumber(calculation.memory,"advanceDeduction") ?? Number(calculation.eligibleBase)*0.144;
-    const contractFee=memoryNumber(calculation.memory,"contractFee") ?? Number(calculation.eligibleBase)*0.10;
-    field("VALOR TOTAL DO PLANO",brl(Number(calculation.eligibleBase)));
-    field("VALOR MENSAL DE REFERÊNCIA",brl(monthlyReference));
-    if(monthsUsed!==undefined)field("MESES UTILIZADOS",String(monthsUsed));
-    if(monthsRemaining!==undefined)field("MESES RESTANTES",String(monthsRemaining));
-    field("SALDO DOS MESES RESTANTES",brl(Number(calculation.unusedBalance)));
-    field("DESCONTO DE 14,4% SOBRE O VALOR TOTAL",`- ${brl(advanceDeduction)}`);
-    field("DESCONTO DE 10% SOBRE O VALOR TOTAL",`- ${brl(contractFee)}`);
-    field("ESTORNO PREVISTO",brl(Number(calculation.estimatedRefund)));
-    if(Number(calculation.estimatedRefund)>0 && request.pixKey) field("CHAVE PIX PARA RECEBIMENTO",request.pixKey);
-    paragraph("Fórmula: (valor total ÷ 12 × meses restantes) − 14,4% do valor total − 10% do valor total. O resultado mínimo é R$ 0,00. Quando houver estorno, o pagamento seguirá o prazo operacional previsto no termo vigente.");
-  }else{
-    paragraph("Plano anual: o sistema apresentará os valores conforme os dados do contrato registrados no EVO/W12.");
+  field("EU,", customer.displayName);
+  field("Inscrito(a) no CPF: sob o nº", cpf);
+  field("e no RG nº", rg);
+  field("Residente e domiciliado(a) à", address);
+  paragraph("Venho pedir o cancelamento do meu CONTRATO com a EVOLUTION ACADEMIA e estou ciente das cláusulas do contrato.",9.2,100);
+  field("Motivo do cancelamento: (É NECESSARIO O PREENCHIMENTO).", reasonLabel(request.reasonCode, request.reasonDetails));
+
+  y -= 2;
+  page.drawLine({start:{x:48,y},end:{x:547,y},thickness:0.6,color:muted});
+  y -= 14;
+
+  paragraph("Cláusula 21º. Este Contrato poderá ser rescindido por qualquer das partes, desde que a parte interessada comunique à outra, sendo que o CONTRATANTE somente poderá rescindir este contrato se estiver em dia com o pagamento das mensalidades, parcelas ou outros débitos existentes para com a CONTRATADA.",8.6,105);
+
+  if (contract.recurring) {
+    paragraph("CLÁUSULA 22º. A solicitação deve ser preenchida e assinada diretamente na recepção da CONTRATADA, pelo CONTRATANTE. Feito isso, enviar o cancelamento por e-mail .",8.6,105);
+    paragraph("CLÁUSULA 23º. No caso de rescisão. O CONTRATANTE pagará uma multa no valor de R$ 258,00.",8.6,105);
+  } else {
+    paragraph("CLÁUSULA 22º. A solicitação deve ser preenchida e assinada diretamente na recepção da CONTRATADA, pelo CONTRATANTE até o dia de seu pagamento. Feito isso , enviar o cancelamento por e-mail",8.6,105);
+    paragraph("CLÁUSULA 23º. No caso de rescisão. O CONTRATANTE pagará uma multa equivalente 14,4% a antecipação das parcelas, e 10% referente à multa do contrato, taxa do sistema.",8.6,105);
   }
 
-  paragraph("Esta solicitação é registrada neste portal e vinculada ao protocolo acima. Este portal substitui o envio do pedido por e-mail no fluxo digital de cancelamento adotado pela Evolution Academia.");
+  y -= 2;
+  field("MATRÍCULA (ID)", memberId);
+  field("DATA DO INÍCIO DO CONTRATO", startDate);
+  field("PLANO", contract.planName);
 
-  y-=8;draw("ASSINATURA DO ALUNO",9,bold,muted);
-  page.drawLine({start:{x:52,y:y-24},end:{x:350,y:y-24},thickness:0.8,color:muted});
-  page.drawText("Assine e envie este documento pelo próprio portal",{x:52,y:y-39,size:8.5,font:regular,color:muted});
-  page.drawText(`Belém, ${request.createdAt.toLocaleDateString("pt-BR")}`,{x:390,y:y-24,size:9,font:regular,color:black});
-  page.drawText("Documento vinculado a protocolo digital • Sem CPF ou RG",{x:52,y:28,size:7.5,font:regular,color:muted});
+  y -= 4;
+  draw("ASSINATURA",9,bold);
+  page.drawLine({start:{x:48,y:y-17},end:{x:330,y:y-17},thickness:0.7,color:black});
+  y -= 30;
+  draw(`BELÉM, ${createdDate}`,9,regular);
+
+  if (contract.recurring) {
+    y -= 3;
+    paragraph("OBSERVAÇÃO: SOLICITAR CANCELAMENTO COM 30 DIAS DE ANTECEDÊNCIA DA PRÓXIMA MENSALIDADE.",8.8,102);
+    paragraph("ENVIAR POR EMAIL: evolutionacademia.pa@gmail.com",8.8,102);
+    paragraph("OBS: CANCELAMENTOS ENTREGUE NA RECEPÇÃO E NÃO ENVIADO POR EMAIL, NÃO TERÁ VALIDADE.",8.8,102);
+  } else {
+    field("PIX:", pix);
+    paragraph("E-MAIL : evolutionacademia.pa@gmail.com.",8.8,102);
+    paragraph("Obs. Prazo para o pagamento é em até 60 dias úteis.",8.8,102);
+    paragraph("A partir da data de solicitação por e-mail .",8.8,102);
+  }
+
+  page.drawText(`Documento gerado pelo Evolution Cancelamento 360 • ${request.protocol}`,{x:48,y:22,size:7.2,font:regular,color:muted});
   return Buffer.from(await pdf.save());
 }
