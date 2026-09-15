@@ -41,7 +41,7 @@ model User {
   id                   String   @id @default(cuid())
   name                 String
   email                String   @unique
-  username             String?  @unique
+  username             String?
   passwordHash         String?
   totpSecretCiphertext String?
   role                 UserRole
@@ -55,11 +55,10 @@ model User {
   updatedAt            DateTime @default(now()) @updatedAt
   events               AuditEvent[]
 
+  @@index([username])
   @@index([active, role])
 }
 
-// LGPD: identificadores oficiais ficam pseudonimizados/cifrados e nunca são enviados ao frontend
-// sem necessidade operacional. CPF/e-mail completos ficam cifrados somente quando necessários ao fluxo.
 model Customer {
   id                   String   @id @default(cuid())
   externalIdHash       String?  @unique
@@ -113,8 +112,6 @@ model PublicAccessGrant {
   @@index([contractId, active])
 }
 
-// Desafio temporário de identidade: nome, nascimento, e-mail e OTP ficam somente em hash.
-// O ID do membro fica cifrado apenas pelo tempo necessário para concluir a validação.
 model IdentityChallenge {
   id                         String    @id @default(cuid())
   externalMemberIdCiphertext String
@@ -149,7 +146,6 @@ model CancellationRequest {
   termGeneratedAt            DateTime?
   signedTermReceivedAt       DateTime?
   submittedAt                DateTime?
-  // Campos legados permanecem para compatibilidade; novos pedidos usam somente os Ciphertext.
   requesterAddress           String?
   requesterRg                String?
   contactEmail               String?
@@ -258,7 +254,6 @@ model AuditEvent {
   @@index([createdAt])
 }
 
-// Rate limit persistente para não depender apenas da memória de uma instância.
 model SecurityThrottle {
   keyHash   String   @id
   count     Int      @default(0)
