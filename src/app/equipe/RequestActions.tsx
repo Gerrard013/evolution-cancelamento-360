@@ -15,28 +15,44 @@ type Props = {
   estimatedRefund: number;
   refundRecorded?: boolean;
   hasRefundReceipt?: boolean;
+  canFinalCancel?: boolean;
 };
 
-export default function RequestActions({ id, status, fee, estimatedRefund, refundRecorded = false, hasRefundReceipt = false }: Props) {
+export default function RequestActions({ id, status, fee, estimatedRefund, refundRecorded = false, hasRefundReceipt = false, canFinalCancel = false }: Props) {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [showRefund, setShowRefund] = useState(false);
+  const [showFinalValidation, setShowFinalValidation] = useState(false);
+  const [noPendingDebtConfirmed, setNoPendingDebtConfirmed] = useState(false);
+  const [dataConfirmed, setDataConfirmed] = useState(false);
+  const [signedTermConfirmed, setSignedTermConfirmed] = useState(false);
+  const [finalNote, setFinalNote] = useState("");
   const [amount, setAmount] = useState(String(estimatedRefund || 0));
   const [method, setMethod] = useState("PIX");
   const [reference, setReference] = useState("");
   const [executedAt, setExecutedAt] = useState(localDateTimeValue());
   const [receipt, setReceipt] = useState<File | null>(null);
 
-  async function decision(decision: string) {
+  const finalChecksOk = noPendingDebtConfirmed && dataConfirmed && signedTermConfirmed;
+
+  async function decision(decision: string, includeFinalChecks = false) {
     setLoading(true); setMessage("");
     try {
       const r = await fetch(`/api/admin/requests/${id}/decision`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ decision })
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          decision,
+          note: includeFinalChecks ? finalNote.trim() : undefined,
+          noPendingDebtConfirmed: includeFinalChecks ? noPendingDebtConfirmed : undefined,
+          dataConfirmed: includeFinalChecks ? dataConfirmed : undefined,
+          signedTermConfirmed: includeFinalChecks ? signedTermConfirmed : undefined
+        })
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d.error || "Não foi possível concluir.");
       setMessage(d.message || "Ação concluída.");
-      setTimeout(() => location.reload(), 700);
+      setTimeout(() => location.reload(), 900);
     } catch (e) { setMessage(e instanceof Error ? e.message : "Falha"); }
     finally { setLoading(false); }
   }
@@ -87,13 +103,30 @@ export default function RequestActions({ id, status, fee, estimatedRefund, refun
     finally { setLoading(false); }
   }
 
+  const cancellableStatus = ["READY_TO_CANCEL", "MANUAL_REVIEW", "UNDER_REVIEW", "SIGNED_RECEIVED"].includes(status);
+
   return <div className="request-actions">
     {status === "FEE_PENDING" && <button disabled={loading} onClick={() => decision("CONFIRM_FEE_PAID")}>Confirmar taxa paga {fee > 0 ? `(R$ ${fee.toFixed(2).replace(".", ",")})` : ""}</button>}
 
-    {["READY_TO_CANCEL", "MANUAL_REVIEW", "UNDER_REVIEW", "SIGNED_RECEIVED"].includes(status) &&
-      <button className="primary-mini" disabled={loading} onClick={() => decision("EXECUTE_CANCEL")}>Cancelar contrato</button>}
+    {cancellableStatus && canFinalCancel && !showFinalValidation &&
+      <button className="primary-mini" disabled={loading} onClick={() => setShowFinalValidation(true)}>Validação final do Ruy</button>}
 
-    {status === "MANUAL_REVIEW" && <button disabled={loading} onClick={() => decision("CONFIRM_MANUAL_CANCELLED")}>Confirmar cancelado no EVO</button>}
+    {cancellableStatus && !canFinalCancel &&
+      <small>Aguardando validação final do proprietário.</small>}
+
+    {cancellableStatus && canFinalCancel && showFinalValidation && <div className="refund-editor final-validation-box">
+      <strong>Última validação antes do cancelamento</strong>
+      <small>O cancelamento só será executado depois que o proprietário confirmar os três itens abaixo.</small>
+      <label className="check"><input type="checkbox" checked={noPendingDebtConfirmed} onChange={e=>setNoPendingDebtConfirmed(e.target.checked)}/><span>Conferi no EVO/W12 e não há pendência financeira que impeça a rescisão.</span></label>
+      <label className="check"><input type="checkbox" checked={dataConfirmed} onChange={e=>setDataConfirmed(e.target.checked)}/><span>Conferi aluno, contrato, plano, unidade, valores e regra aplicável.</span></label>
+      <label className="check"><input type="checkbox" checked={signedTermConfirmed} onChange={e=>setSignedTermConfirmed(e.target.checked)}/><span>Conferi o termo assinado e autorizo a conclusão deste protocolo.</span></label>
+      <label>Observação final<textarea value={finalNote} maxLength={1000} onChange={e=>setFinalNote(e.target.value)} placeholder="Opcional: registre alguma observação da conferência"/></label>
+      <div className="refund-editor-actions">
+        <button onClick={()=>setShowFinalValidation(false)} disabled={loading}>Voltar</button>
+        {status === "MANUAL_REVIEW" && <button disabled={loading || !finalChecksOk} onClick={()=>decision("CONFIRM_MANUAL_CANCELLED", true)}>Confirmar cancelado manualmente no EVO</button>}
+        <button className="primary-mini" disabled={loading || !finalChecksOk} onClick={()=>decision("EXECUTE_CANCEL", true)}>{loading?"Processando...":"Autorizar cancelamento no EVO"}</button>
+      </div>
+    </div>}
 
     {status === "REFUND_PENDING" && estimatedRefund > 0 && !showRefund &&
       <button className="primary-mini" disabled={loading} onClick={() => setShowRefund(true)}>Registrar estorno pago</button>}
