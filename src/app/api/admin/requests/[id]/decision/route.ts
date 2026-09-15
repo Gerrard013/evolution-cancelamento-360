@@ -26,6 +26,7 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
     const fingerprint = requestFingerprint(req);
 
     if (input.decision === "REJECT") {
+      if (["COMPLETED", "EVO_CANCELLED", "CANCELLED_CONFIRMED"].includes(item.status)) return Response.json({ error: "Solicitação já concluída." }, { status: 409 });
       await prisma.$transaction([
         prisma.cancellationRequest.update({ where: { id }, data: { status: "REJECTED", activeKey: null } }),
         prisma.auditEvent.create({ data: { requestId: id, action: "ADMIN_REJECTED", entity: "CancellationRequest", entityId: id, before: { status: item.status }, after: { status: "REJECTED", note: input.note || null, by: admin.sub }, ...fingerprint } })
@@ -35,6 +36,7 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
 
     if (input.decision === "CONFIRM_FEE_PAID") {
       if (item.cancellationFee.lte(0)) return Response.json({ error: "Esta solicitação não possui taxa pendente." }, { status: 409 });
+      if (item.cancellationFeePaidAt) return Response.json({ ok: true, status: item.status, message: "Pagamento já estava confirmado." });
       await prisma.$transaction([
         prisma.cancellationRequest.update({ where: { id }, data: { cancellationFeePaidAt: new Date(), status: "READY_TO_CANCEL" } }),
         prisma.auditEvent.create({ data: { requestId: id, action: "CANCELLATION_FEE_CONFIRMED", entity: "CancellationRequest", entityId: id, before: { status: item.status }, after: { status: "READY_TO_CANCEL", fee: Number(item.cancellationFee), by: admin.sub, requiresOwnerApproval: true }, ...fingerprint } })
@@ -49,6 +51,9 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
       if (item.cancellationFee.gt(0) && !item.cancellationFeePaidAt) return Response.json({ error: "A taxa ainda não foi confirmada como paga." }, { status: 409 });
       if (!input.noPendingDebtConfirmed || !input.dataConfirmed || !input.signedTermConfirmed) {
         return Response.json({ error: "Conclua as três validações finais: pendências financeiras, dados e termo assinado." }, { status: 409 });
+      }
+      if (["COMPLETED", "EVO_CANCELLED", "CANCELLED_CONFIRMED"].includes(item.status) || item.contract.status === "CANCELLED") {
+        return Response.json({ error: "Este contrato já está marcado como cancelado." }, { status: 409 });
       }
 
       await prisma.auditEvent.create({
@@ -83,6 +88,9 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
         return Response.json({ ok: true, status: result.status, operationId: result.operationId || null, paymentMethodRemoved: result.paymentMethodRemoved });
       } catch (error) {
         const code = error instanceof Error ? error.message : "CANCEL_ERROR";
+        if (["ALREADY_CANCELLED", "REQUEST_STATUS_NOT_EXECUTABLE", "EVO_CANCELLATION_ALREADY_IN_PROGRESS"].includes(code)) {
+          return Response.json({ error: "A solicitação não está em um estado válido para nova execução no EVO." }, { status: 409 });
+        }
         if (["EVO_WRITE_DISABLED","CONTRACT_EXTERNAL_ID_MISSING"].includes(code)) {
           await prisma.cancellationRequest.update({ where: { id }, data: { status: "MANUAL_REVIEW" } });
           return Response.json({ ok: true, status: "MANUAL_REVIEW", message: "Validação final registrada. Conclua o cancelamento no EVO/W12 e confirme aqui." });
