@@ -18,7 +18,10 @@ try {
 const ownerUser = process.env.OWNER_USERNAME?.trim();
 const ownerHash = process.env.OWNER_PASSWORD_HASH?.trim();
 if (!ownerUser || !ownerHash) errors.push("Configure OWNER_USERNAME + OWNER_PASSWORD_HASH for final owner approval");
-if (process.env.NODE_ENV === "production" && !process.env.OWNER_TOTP_SECRET?.trim()) errors.push("OWNER_TOTP_SECRET is required in production");
+if (ownerHash && !/^pbkdf2\$\d+\$[^$]+\$[^$]+$/.test(ownerHash)) errors.push("OWNER_PASSWORD_HASH has an unsupported format");
+const ownerTotp = process.env.OWNER_TOTP_SECRET?.replace(/\s+/g, "").replace(/=+$/g, "").toUpperCase();
+if (process.env.NODE_ENV === "production" && !ownerTotp) errors.push("OWNER_TOTP_SECRET is required in production");
+if (ownerTotp && (!/^[A-Z2-7]+$/.test(ownerTotp) || ownerTotp.length < 16)) errors.push("OWNER_TOTP_SECRET must be a valid Base32 secret");
 const ownerSessionVersion = Number(process.env.OWNER_SESSION_VERSION || 1);
 if (!Number.isInteger(ownerSessionVersion) || ownerSessionVersion < 1) errors.push("OWNER_SESSION_VERSION must be a positive integer");
 
@@ -47,6 +50,17 @@ if (["read","write"].includes(mode)) {
   const fallbackReady = Boolean(process.env.EVO_API_TOKEN?.trim() && (authMode !== "basic" || process.env.EVO_API_USERNAME?.trim()));
   if (completeUnits.length !== unitPrefixes.length && !fallbackReady) {
     errors.push("Configure complete EVO credentials for Condor and Umarizal, or a complete fallback EVO profile");
+  }
+
+  for (const pathName of ["EVO_MEMBER_BY_ID_PATH", "EVO_CONTRACTS_BY_MEMBER_PATH"]) {
+    const value = process.env[pathName]?.trim();
+    if (!value) errors.push(`${pathName} is required in ${mode} mode`);
+    else if (!value.startsWith("/") || value.includes("://")) errors.push(`${pathName} must be an API path, not an absolute URL`);
+  }
+
+  for (const optionalPath of ["EVO_MEMBERS_PATH", "EVO_MEMBER_PROFILE_PATH"]) {
+    const value = process.env[optionalPath]?.trim();
+    if (value && (!value.startsWith("/") || value.includes("://"))) errors.push(`${optionalPath} must be an API path, not an absolute URL`);
   }
 }
 
