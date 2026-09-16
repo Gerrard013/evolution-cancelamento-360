@@ -3,16 +3,23 @@ import { encryptText, hmac } from "@/lib/security/crypto";
 import { evoAdapter } from "@/lib/evo";
 import type { EvoCustomer } from "./types";
 
-function normalizedUnit(value: string) {
+function normalizedUnit(value: string, profileKey?: string) {
+  const profile = (profileKey || "").trim().toUpperCase();
+  if (profile === "CONDOR") return "Condor";
+  if (profile === "UMARIZAL") return "Umarizal";
   if (/condor/i.test(value)) return "Condor";
   if (/umarizal/i.test(value)) return "Umarizal";
   return value || "Evolution";
 }
 
 function activeLike(status: string) {
-  const value = status.toUpperCase();
-  const configured = (process.env.EVO_ACTIVE_CONTRACT_STATUSES || "ACTIVE,ATIVO,ATIVA,VIGENTE,OPEN,1").split(",").map(v => v.trim().toUpperCase()).filter(Boolean);
-  return configured.some(x => value === x || value.includes(x));
+  const value = status.trim().toUpperCase();
+  const configured = (process.env.EVO_ACTIVE_CONTRACT_STATUSES || "ACTIVE,ATIVO,ATIVA,VIGENTE,OPEN,1")
+    .split(",")
+    .map(v => v.trim().toUpperCase())
+    .filter(Boolean);
+  // Fail closed: never use substring matching here (e.g. INACTIVE contains ACTIVE).
+  return configured.includes(value);
 }
 
 export async function syncMemberFromEvo(memberId: string, profileKey?: string) {
@@ -45,7 +52,7 @@ export async function syncMemberFromEvo(memberId: string, profileKey?: string) {
 
   const savedContracts = [];
   for (const contract of contracts) {
-    const unit = normalizedUnit(contract.unit);
+    const unit = normalizedUnit(contract.unit, profileKey);
     const externalIdHash = hmac(`${profileKey || unit || "DEFAULT"}:${contract.externalId}`, "EXTERNAL_ID_PEPPER");
     const metadata = {
       paymentMethodId: contract.paymentMethodId || null,
@@ -53,6 +60,7 @@ export async function syncMemberFromEvo(memberId: string, profileKey?: string) {
       sourceStatus: contract.status,
       evoProfile: profileKey || null
     };
+    const normalizedStatus = activeLike(contract.status) ? "ACTIVE" : contract.status.trim().toUpperCase() || "UNKNOWN";
     const saved = await prisma.contract.upsert({
       where: { externalIdHash },
       create: {
@@ -66,7 +74,7 @@ export async function syncMemberFromEvo(memberId: string, profileKey?: string) {
         endDate: contract.endDate ? new Date(contract.endDate) : null,
         amountPaid: contract.amountPaid,
         recurring: contract.recurring || /recorr/i.test(`${contract.planType} ${contract.planName}`),
-        status: activeLike(contract.status) ? "ACTIVE" : contract.status,
+        status: normalizedStatus,
         metadata,
         syncedAt: new Date()
       },
@@ -79,7 +87,7 @@ export async function syncMemberFromEvo(memberId: string, profileKey?: string) {
         endDate: contract.endDate ? new Date(contract.endDate) : null,
         amountPaid: contract.amountPaid,
         recurring: contract.recurring || /recorr/i.test(`${contract.planType} ${contract.planName}`),
-        status: activeLike(contract.status) ? "ACTIVE" : contract.status,
+        status: normalizedStatus,
         metadata,
         syncedAt: new Date()
       }
