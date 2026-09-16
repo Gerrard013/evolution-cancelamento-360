@@ -106,7 +106,7 @@ function normalizeDateString(value: unknown): string | undefined {
   const br = raw.match(/^(\d{2})[\/-](\d{2})[\/-](\d{4})$/);
   if (br) return `${br[3]}-${br[2]}-${br[1]}T00:00:00.000Z`;
   const iso = new Date(raw);
-  return Number.isNaN(iso.getTime()) ? raw : iso.toISOString();
+  return Number.isNaN(iso.getTime()) ? undefined : iso.toISOString();
 }
 
 function firstPayloadObject(raw: unknown): Record<string, unknown> {
@@ -147,14 +147,15 @@ function mapContract(raw: unknown, fallbackCustomerId?: string): EvoContract | n
   const data = obj(raw);
   const id = asString(pick(data, "id", "externalId", "contractId", "idContract", "idContrato", "idMemberMembership"));
   const customerId = asString(pick(data, "customerExternalId", "memberId", "idMember", "customerId", "idCliente")) || fallbackCustomerId;
-  if (!id || !customerId) return null;
+  const startDate = normalizeDateString(pick(data, "startDate", "inicio", "dateStart", "start_date", "dataInicio"));
+  if (!id || !customerId || !startDate) return null;
   return {
     externalId: id,
     customerExternalId: customerId,
     unit: asEntityName(pick(data, "unit", "unidade", "branch", "branchName", "branchUnit")) || "Evolution",
     planName: asEntityName(pick(data, "planName", "plan", "plano", "membershipName", "membership", "name")) || "Plano",
     planType: asEntityName(pick(data, "planType", "tipoPlano", "type", "membershipType")) || "UNKNOWN",
-    startDate: normalizeDateString(pick(data, "startDate", "inicio", "dateStart", "start_date", "dataInicio")) || new Date().toISOString(),
+    startDate,
     endDate: normalizeDateString(pick(data, "endDate", "fim", "dateEnd", "end_date", "dataFim")),
     amountPaid: asNumber(pick(data, "contractValue", "valorContrato", "totalAmount", "totalValue", "valorTotal", "value", "price", "amountPaid", "valorPago", "paidAmount", "totalPaid", "originalValue")),
     recurring: asBoolean(pick(data, "recurring", "recorrente", "isRecurring")),
@@ -193,7 +194,7 @@ export class HttpEvoAdapter implements EvoAdapter {
     const cacheKey = `${this.cachePrefix}:member:${memberId}`;
     const cached = await getCached<EvoCustomer>(cacheKey);
     if (cached) return cached;
-    const raw = await evoFetch(pathFromEnv("EVO_MEMBER_BY_ID_PATH", { id: memberId, memberId }), {}, this.profileOrUnit);
+    const raw = await evoFetch(pathFromEnv("EVO_MEMBER_BY_ID_PATH", { id: memberId, memberId, idMember: memberId }), {}, this.profileOrUnit);
     const customer = mapCustomer(raw);
     if (customer) await setCached(cacheKey, customer, 900);
     return customer;
@@ -203,7 +204,7 @@ export class HttpEvoAdapter implements EvoAdapter {
     const cacheKey = `${this.cachePrefix}:contracts:${customerExternalId}`;
     const cached = await getCached<EvoContract[]>(cacheKey);
     if (cached) return cached;
-    const raw = await evoFetch(pathFromEnv("EVO_CONTRACTS_BY_MEMBER_PATH", { id: customerExternalId, memberId: customerExternalId }), {}, this.profileOrUnit);
+    const raw = await evoFetch(pathFromEnv("EVO_CONTRACTS_BY_MEMBER_PATH", { id: customerExternalId, memberId: customerExternalId, idMember: customerExternalId, customerId: customerExternalId }), {}, this.profileOrUnit);
     const contracts = arrayPayload(raw).map(item => mapContract(item, customerExternalId)).filter((v): v is EvoContract => Boolean(v));
     await setCached(cacheKey, contracts, 600);
     return contracts;
@@ -213,7 +214,7 @@ export class HttpEvoAdapter implements EvoAdapter {
     const cacheKey = `${this.cachePrefix}:contract:${contractExternalId}`;
     const cached = await getCached<EvoContract>(cacheKey);
     if (cached) return cached;
-    const raw = await evoFetch(pathFromEnv("EVO_CONTRACT_BY_ID_PATH", { id: contractExternalId, contractId: contractExternalId }), {}, this.profileOrUnit);
+    const raw = await evoFetch(pathFromEnv("EVO_CONTRACT_BY_ID_PATH", { id: contractExternalId, contractId: contractExternalId, idContract: contractExternalId, idMemberMembership: contractExternalId }), {}, this.profileOrUnit);
     const contract = mapContract(obj(raw).data || raw);
     if (contract) await setCached(cacheKey, contract, 600);
     return contract;
@@ -221,7 +222,7 @@ export class HttpEvoAdapter implements EvoAdapter {
 
   async cancelContract(contractExternalId: string, protocol: string): Promise<EvoCancelResult> {
     if (process.env.EVO_INTEGRATION_MODE !== "write" || process.env.EVO_WRITE_ENABLED !== "true") throw new Error("EVO_WRITE_DISABLED");
-    const path = pathFromEnv("EVO_CANCEL_CONTRACT_PATH", { id: contractExternalId, contractId: contractExternalId });
+    const path = pathFromEnv("EVO_CANCEL_CONTRACT_PATH", { id: contractExternalId, contractId: contractExternalId, idContract: contractExternalId, idMemberMembership: contractExternalId });
     const method = (process.env.EVO_CANCEL_METHOD || "POST").toUpperCase();
     if (!["POST", "DELETE", "PUT"].includes(method)) throw new Error("EVO_CANCEL_METHOD_INVALID");
 
@@ -257,7 +258,15 @@ export class HttpEvoAdapter implements EvoAdapter {
     if (process.env.EVO_INTEGRATION_MODE !== "write" || process.env.EVO_WRITE_ENABLED !== "true" || process.env.EVO_REMOVE_PAYMENT_METHOD_ENABLED !== "true") {
       throw new Error("EVO_PAYMENT_METHOD_WRITE_DISABLED");
     }
-    const path = pathFromEnv("EVO_REMOVE_PAYMENT_METHOD_PATH", { id: contractExternalId, contractId: contractExternalId, memberId: customerExternalId, customerId: customerExternalId });
+    const path = pathFromEnv("EVO_REMOVE_PAYMENT_METHOD_PATH", {
+      id: contractExternalId,
+      contractId: contractExternalId,
+      idContract: contractExternalId,
+      idMemberMembership: contractExternalId,
+      memberId: customerExternalId,
+      idMember: customerExternalId,
+      customerId: customerExternalId
+    });
     const method = (process.env.EVO_REMOVE_PAYMENT_METHOD_METHOD || "DELETE").toUpperCase();
     if (!["DELETE", "PUT"].includes(method)) throw new Error("EVO_REMOVE_PAYMENT_METHOD_METHOD_INVALID");
     const raw = await evoFetch(path, {
