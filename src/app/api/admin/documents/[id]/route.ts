@@ -8,16 +8,16 @@ export async function GET(_: Request, context: { params: Promise<{ id: string }>
   const doc = await prisma.attachment.findUnique({ where: { id } });
   if (!doc || !doc.content) return Response.json({ error: "Documento não encontrado" }, { status: 404 });
 
-  let content = Buffer.from(doc.content);
+  let content: Uint8Array = new Uint8Array(doc.content);
   if (doc.storageMode === "DATABASE_ENCRYPTED_V1") {
     try {
-      content = decryptBytes(content);
+      content = new Uint8Array(decryptBytes(content));
     } catch {
       return Response.json({ error: "Documento protegido indisponível. Procure o administrador." }, { status: 500 });
     }
   }
 
-  return new Response(new Uint8Array(content), {
+  return new Response(content, {
     headers: {
       "Content-Type": doc.mimeType,
       "Content-Disposition": `attachment; filename="${doc.originalName.replace(/[\"\\]/g, "_")}"`,
