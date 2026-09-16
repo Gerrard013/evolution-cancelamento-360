@@ -8,6 +8,17 @@ function round(value: number) {
   return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
+function dateKeyInBelem(value: Date) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Belem",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(value);
+  const get = (type: string) => parts.find(part => part.type === type)?.value || "";
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
 function calendarMonthsUsedInclusive(start: Date, at: Date) {
   if (at < start) return 0;
   const diff = (at.getUTCFullYear() - start.getUTCFullYear()) * 12 + (at.getUTCMonth() - start.getUTCMonth());
@@ -47,6 +58,12 @@ export async function ensureAnnualOperationalRule() {
 export async function previewForContract(contractId: string, desiredDate: Date) {
   const contract = await prisma.contract.findUnique({ where: { id: contractId } });
   if (!contract) throw new Error("CONTRACT_NOT_FOUND");
+
+  const desiredKey = dateKeyInBelem(desiredDate);
+  const todayKey = dateKeyInBelem(new Date());
+  const startKey = dateKeyInBelem(contract.startDate);
+  if (desiredKey < todayKey) throw new Error("DESIRED_DATE_IN_PAST");
+  if (desiredKey < startKey) throw new Error("DESIRED_DATE_BEFORE_CONTRACT_START");
 
   const looksRecurring = contract.recurring || /recorr/i.test(`${contract.planType} ${contract.planName}`);
   if (looksRecurring) {
