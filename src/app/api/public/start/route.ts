@@ -106,7 +106,7 @@ export async function POST(req: Request) {
 
     try {
       console.info("[IDENTITY_STAGE]", JSON.stringify({ stage: "mail_send_begin", ms: Date.now() - startedAt }));
-      await sendIdentityCode(email, code);
+      await sendIdentityCode(email, code, ttlMinutes);
       console.info("[IDENTITY_STAGE]", JSON.stringify({ stage: "mail_send_end", ms: Date.now() - startedAt }));
     } catch (error) {
       await prisma.identityChallenge.delete({ where: { id: challenge.id } }).catch(() => undefined);
