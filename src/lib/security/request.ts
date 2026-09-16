@@ -1,5 +1,10 @@
 import { hashNetworkValue } from "./crypto";
 
+const PRODUCTION_ORIGINS = [
+  "https://cancelamento.evolutionacademia.com.br",
+  "https://evolution-cancelamento-360-production.up.railway.app"
+] as const;
+
 export function clientIp(req: Request): string {
   const forwarded = req.headers.get("x-forwarded-for");
   if (forwarded) return forwarded.split(",")[0]?.trim() || "unknown";
@@ -15,7 +20,7 @@ export function requestFingerprint(req: Request) {
   };
 }
 
-function normalizeOrigin(value: string | undefined): string | null {
+function normalizeOrigin(value: string | null | undefined): string | null {
   const raw = value?.trim();
   if (!raw) return null;
   try {
@@ -28,45 +33,71 @@ function normalizeOrigin(value: string | undefined): string | null {
   }
 }
 
-function trustedOrigins(req: Request) {
+function configuredTrustedOrigins() {
   const allowed = new Set<string>();
   const candidates = [
     process.env.APP_ORIGIN,
     process.env.RAILWAY_STATIC_URL,
     process.env.RAILWAY_PUBLIC_DOMAIN,
-    process.env.RAILWAY_SERVICE_EVOLUTION_CANCELAMENTO_360_URL
+    process.env.RAILWAY_SERVICE_EVOLUTION_CANCELAMENTO_360_URL,
+    ...(process.env.TRUSTED_ORIGINS || "").split(",")
   ];
+
+  if (process.env.NODE_ENV === "production") candidates.push(...PRODUCTION_ORIGINS);
 
   for (const candidate of candidates) {
     const origin = normalizeOrigin(candidate);
     if (origin) allowed.add(origin);
   }
-
-  // Requests submitted from the same HTTPS origin are valid CSRF-wise even when
-  // Railway exposes the app through more than one bound hostname (custom + fallback).
-  // This does not trust arbitrary third-party origins: the browser Origin must match
-  // the actual request URL origin received by the application.
-  const requestOrigin = normalizeOrigin(new URL(req.url).origin);
-  if (requestOrigin) allowed.add(requestOrigin);
-
-  if (process.env.NODE_ENV !== "production") {
-    allowed.add(new URL(req.url).origin);
-  }
   return allowed;
 }
 
+function forwardedOrigin(req: Request): string | null {
+  const forwardedHost = req.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
+  const host = forwardedHost || req.headers.get("host")?.trim();
+  if (!host) return null;
+  const forwardedProto = req.headers.get("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase();
+  const proto = forwardedProto === "http" || forwardedProto === "https" ? forwardedProto : "https";
+  return normalizeOrigin(`${proto}://${host}`);
+}
+
+function safeHost(origin: string | null) {
+  if (!origin) return "none";
+  try { return new URL(origin).host; }
+  catch { return "invalid"; }
+}
+
 export function assertTrustedOrigin(req: Request): void {
-  const rawOrigin = req.headers.get("origin");
-  if (!rawOrigin) throw new Response("Origin required", { status: 403 });
-
-  const origin = normalizeOrigin(rawOrigin);
-  if (!origin) throw new Response("Origin rejected", { status: 403 });
-
-  const allowed = trustedOrigins(req);
+  const allowed = configuredTrustedOrigins();
   if (process.env.NODE_ENV === "production" && allowed.size === 0) {
     throw new Response("Trusted origin not configured", { status: 503 });
   }
-  if (!allowed.has(origin)) throw new Response("Origin rejected", { status: 403 });
+
+  // Origin is authoritative for browser POST/fetch requests. Some privacy tools
+  // may strip it, so Referer is accepted only as a secondary same-site signal.
+  const origin = normalizeOrigin(req.headers.get("origin"));
+  const referer = normalizeOrigin(req.headers.get("referer"));
+  const browserOrigin = origin || referer;
+
+  if (browserOrigin && allowed.has(browserOrigin)) return;
+
+  // Railway terminates TLS and may expose the generated service hostname to the
+  // application while the browser is on the custom hostname. Trust the forwarded
+  // host only when it resolves to one of our explicit allow-listed origins.
+  const proxyOrigin = forwardedOrigin(req);
+  if (browserOrigin && proxyOrigin && allowed.has(proxyOrigin) && browserOrigin === proxyOrigin) return;
+
+  // Standards-compliant browsers can omit Origin/Referer in strict privacy mode.
+  // Accept that case only for a same-origin fetch routed through an allow-listed host.
+  if (!browserOrigin && req.headers.get("sec-fetch-site") === "same-origin" && proxyOrigin && allowed.has(proxyOrigin)) return;
+
+  console.warn("[ORIGIN_REJECTED]", JSON.stringify({
+    originHost: safeHost(origin),
+    refererHost: safeHost(referer),
+    proxyHost: safeHost(proxyOrigin),
+    fetchSite: req.headers.get("sec-fetch-site") || "none"
+  }));
+  throw new Response("Origin rejected", { status: 403 });
 }
 
 export async function readJsonLimited(req: Request, maxBytes = 32_768): Promise<unknown> {
