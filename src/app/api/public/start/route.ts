@@ -17,6 +17,18 @@ function normalizeCpf(value: string) {
   return value.replace(/\D/g, "");
 }
 
+function validCpf(value: string) {
+  const cpf = normalizeCpf(value);
+  if (!/^\d{11}$/.test(cpf) || /^(\d)\1{10}$/.test(cpf)) return false;
+  const digit = (length: number) => {
+    let sum = 0;
+    for (let i = 0; i < length; i += 1) sum += Number(cpf[i]) * (length + 1 - i);
+    const mod = (sum * 10) % 11;
+    return mod === 10 ? 0 : mod;
+  };
+  return digit(9) === Number(cpf[9]) && digit(10) === Number(cpf[10]);
+}
+
 function normalizeName(value: string) {
   return value
     .normalize("NFD")
@@ -65,7 +77,7 @@ export async function POST(req: Request) {
 
     const input = schema.parse(await readJsonLimited(req, 4096));
     const cpf = normalizeCpf(input.cpf);
-    if (cpf.length !== 11) return Response.json({ error: "Informe um CPF válido com 11 dígitos." }, { status: 400 });
+    if (!validCpf(cpf)) return Response.json({ error: "Informe um CPF válido." }, { status: 400 });
 
     await enforcePersistentRateLimit("identity-start", cpf, 6, 10 * 60_000);
     console.info("[IDENTITY_STAGE]", JSON.stringify({ stage: "evo_lookup_begin" }));
