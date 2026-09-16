@@ -3,6 +3,7 @@ import { getCustomerSession } from "@/lib/security/session";
 import { assertTrustedOrigin, requestFingerprint } from "@/lib/security/request";
 import { configuredLimit, enforceRateLimit } from "@/lib/security/rate-limit";
 import { validateSignedDocument } from "@/lib/documents/file-security";
+import { encryptBytes } from "@/lib/security/crypto";
 
 export async function POST(req: Request) {
   try {
@@ -19,10 +20,21 @@ export async function POST(req: Request) {
     if (item.status !== "FEE_PENDING" || item.cancellationFee.lte(0)) return Response.json({ error: "Não há taxa pendente neste pedido." }, { status: 409 });
     const bytes = Buffer.from(await file.arrayBuffer());
     const meta = validateSignedDocument(file, bytes);
+    const encryptedContent = encryptBytes(bytes);
     const fingerprint = requestFingerprint(req);
     const att = await prisma.$transaction(async tx => {
-      const attachment = await tx.attachment.create({ data: { requestId: item.id, type: "CANCELLATION_FEE_RECEIPT", ...meta, malwareStatus: "VALIDATED", content: bytes, storageMode: "DATABASE", uploadedBy: "CUSTOMER" } });
-      await tx.auditEvent.create({ data: { requestId: item.id, action: "CANCELLATION_FEE_RECEIPT_UPLOADED", entity: "Attachment", entityId: attachment.id, after: { sha256: meta.sha256, mimeType: meta.mimeType, sizeBytes: meta.sizeBytes }, ...fingerprint } });
+      const attachment = await tx.attachment.create({
+        data: {
+          requestId: item.id,
+          type: "CANCELLATION_FEE_RECEIPT",
+          ...meta,
+          malwareStatus: "VALIDATED",
+          content: encryptedContent,
+          storageMode: "DATABASE_ENCRYPTED_V1",
+          uploadedBy: "CUSTOMER"
+        }
+      });
+      await tx.auditEvent.create({ data: { requestId: item.id, action: "CANCELLATION_FEE_RECEIPT_UPLOADED", entity: "Attachment", entityId: attachment.id, after: { sha256: meta.sha256, mimeType: meta.mimeType, sizeBytes: meta.sizeBytes, storageMode: "DATABASE_ENCRYPTED_V1" }, ...fingerprint } });
       return attachment;
     });
     return Response.json({ ok: true, attachmentId: att.id, message: "Comprovante recebido. A equipe fará a confirmação do pagamento." });
