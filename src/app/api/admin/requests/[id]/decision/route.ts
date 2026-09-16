@@ -26,6 +26,9 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
     const fingerprint = requestFingerprint(req);
 
     if (input.decision === "REJECT") {
+      if (!admin.role || !["OWNER", "ADMIN", "MANAGER"].includes(admin.role)) {
+        return Response.json({ error: "Este perfil não pode rejeitar solicitações." }, { status: 403 });
+      }
       if (["COMPLETED", "EVO_CANCELLED", "CANCELLED_CONFIRMED"].includes(item.status)) return Response.json({ error: "Solicitação já concluída." }, { status: 409 });
       await prisma.$transaction([
         prisma.cancellationRequest.update({ where: { id }, data: { status: "REJECTED", activeKey: null } }),
@@ -35,6 +38,9 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
     }
 
     if (input.decision === "CONFIRM_FEE_PAID") {
+      if (!admin.role || !["OWNER", "ADMIN", "MANAGER", "FINANCE"].includes(admin.role)) {
+        return Response.json({ error: "Este perfil não pode confirmar pagamentos." }, { status: 403 });
+      }
       if (item.cancellationFee.lte(0)) return Response.json({ error: "Esta solicitação não possui taxa pendente." }, { status: 409 });
       if (item.cancellationFeePaidAt) return Response.json({ ok: true, status: item.status, message: "Pagamento já estava confirmado." });
       await prisma.$transaction([
