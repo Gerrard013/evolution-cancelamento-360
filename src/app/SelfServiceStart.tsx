@@ -5,6 +5,7 @@ import { useState } from "react";
 type ContractOption = { id:string; unit:string; planName:string; startDate:string; recurring:boolean; planType:string };
 type ProtocolResult = { protocol:string; status:string; statusLabel:string; createdAt:string; unit:string; planName:string; cancellationFee:number; cancellationFeePaid:boolean; estimatedRefund:number };
 type AuthStage = "credentials"|"otp"|"verified";
+type AuthMethod = "evo"|"attendance";
 
 function formatCpf(value:string) {
   const digits=value.replace(/\D/g,"").slice(0,11);
@@ -32,12 +33,14 @@ async function apiRequest(url:string, options:RequestInit={}, timeoutMs=18_000) 
 
 export default function SelfServiceStart() {
   const [mode,setMode]=useState<"new"|"status">("new");
+  const [authMethod,setAuthMethod]=useState<AuthMethod>("evo");
   const [authStage,setAuthStage]=useState<AuthStage>("credentials");
   const [cpf,setCpf]=useState("");
   const [birthDate,setBirthDate]=useState("");
   const [challengeId,setChallengeId]=useState("");
   const [emailHint,setEmailHint]=useState("");
   const [code,setCode]=useState("");
+  const [accessId,setAccessId]=useState("");
   const [name,setName]=useState("");
   const [contracts,setContracts]=useState<ContractOption[]>([]);
   const [protocol,setProtocol]=useState("");
@@ -46,11 +49,13 @@ export default function SelfServiceStart() {
   const [loading,setLoading]=useState(false);
   const money = new Intl.NumberFormat("pt-BR",{style:"currency",currency:"BRL"});
 
-  function resetAuth() {
+  function resetAuth(nextMethod:AuthMethod="evo") {
+    setAuthMethod(nextMethod);
     setAuthStage("credentials");
     setChallengeId("");
     setEmailHint("");
     setCode("");
+    setAccessId("");
     setName("");
     setContracts([]);
     setProtocolResult(null);
@@ -59,7 +64,7 @@ export default function SelfServiceStart() {
 
   function switchMode(next:"new"|"status") {
     setMode(next);
-    resetAuth();
+    resetAuth("evo");
   }
 
   async function startIdentity(e:React.FormEvent) {
@@ -94,6 +99,21 @@ export default function SelfServiceStart() {
     } finally { setLoading(false); }
   }
 
+  async function enterWithAttendanceCode(e:React.FormEvent) {
+    e.preventDefault(); setError(""); setLoading(true);
+    try {
+      await apiRequest("/api/public/session",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({accessId:accessId.trim().toUpperCase()})
+      },12_000);
+      location.href="/cliente";
+    } catch(e) {
+      setError(e instanceof Error?e.message:"Código de atendimento inválido ou expirado.");
+      setLoading(false);
+    }
+  }
+
   async function choose(contractId:string) {
     setError(""); setLoading(true);
     try {
@@ -115,7 +135,18 @@ export default function SelfServiceStart() {
     finally { setLoading(false); }
   }
 
-  const identityCard = authStage==="credentials" ? <form onSubmit={startIdentity}>
+  const identityCard = authMethod==="attendance" ? <form onSubmit={enterWithAttendanceCode}>
+    <div className="self-service-title">
+      <span>ACESSO ASSISTIDO</span>
+      <h2>Código de atendimento</h2>
+      <p>Use o código temporário fornecido pela equipe Evolution. Ele funciona uma única vez e não depende de e-mail.</p>
+    </div>
+    <label>Código de atendimento<input value={accessId} onChange={e=>setAccessId(e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g,"").slice(0,32))} placeholder="EV-XXXX-XXXX-XXXX-XXXX" autoComplete="one-time-code" required/></label>
+    {error&&<div className="error-box" role="alert">{error}</div>}
+    <button className="btn primary full" disabled={loading||accessId.trim().length<8}>{loading?"Validando acesso...":"Entrar no cancelamento"}</button>
+    <button type="button" className="btn secondary full" disabled={loading} onClick={()=>resetAuth("evo")}>Voltar para CPF + nascimento</button>
+    <small className="privacy-note">O código é vinculado a um único contrato ativo, expira e é inutilizado no primeiro acesso.</small>
+  </form> : authStage==="credentials" ? <form onSubmit={startIdentity}>
     <div className="self-service-title">
       <span>ACESSO SEGURO</span>
       <h2>Confirme sua identidade</h2>
@@ -125,7 +156,8 @@ export default function SelfServiceStart() {
     <label>Data de nascimento<input type="date" value={birthDate} onChange={e=>setBirthDate(e.target.value)} autoComplete="bday" required/></label>
     {error&&<div className="error-box" role="alert">{error}</div>}
     <button className="btn primary full" disabled={loading||cpf.length!==11||!birthDate}>{loading?"Validando no EVO...":"Receber código por e-mail"}</button>
-    <small className="privacy-note">O sistema consulta o cadastro no EVO/W12. Se CPF e nascimento coincidirem, o código será enviado somente para o e-mail já cadastrado no EVO. O e-mail não precisa ser digitado.</small>
+    {mode==="new"&&<button type="button" className="btn secondary full" disabled={loading} onClick={()=>resetAuth("attendance")}>Usar código de atendimento</button>}
+    <small className="privacy-note">O sistema consulta o EVO/W12. Se o envio por e-mail estiver indisponível, a equipe pode gerar um código de atendimento temporário sem depender de DNS ou provedor de e-mail.</small>
   </form> : authStage==="otp" ? <form onSubmit={verifyIdentity}>
     <div className="self-service-title">
       <span>VERIFICAÇÃO EM 2 ETAPAS</span>
@@ -135,7 +167,8 @@ export default function SelfServiceStart() {
     <label>Código de confirmação<input inputMode="numeric" pattern="[0-9]{6}" maxLength={6} value={code} onChange={e=>setCode(e.target.value.replace(/\D/g,"").slice(0,6))} placeholder="000000" autoComplete="one-time-code" required/></label>
     {error&&<div className="error-box" role="alert">{error}</div>}
     <button className="btn primary full" disabled={loading||code.length!==6}>{loading?"Confirmando...":"Confirmar identidade"}</button>
-    <button type="button" className="btn secondary full" disabled={loading} onClick={resetAuth}>Corrigir meus dados</button>
+    <button type="button" className="btn secondary full" disabled={loading} onClick={()=>resetAuth("evo")}>Corrigir meus dados</button>
+    {mode==="new"&&<button type="button" className="btn secondary full" disabled={loading} onClick={()=>resetAuth("attendance")}>Usar código de atendimento</button>}
     <small className="privacy-note">O código é temporário, de uso único e possui limite de tentativas.</small>
   </form> : null;
 
@@ -151,7 +184,7 @@ export default function SelfServiceStart() {
       {error&&<div className="error-box" role="alert">{error}</div>}
       <small className="privacy-note">A matrícula e o e-mail são obtidos internamente pelo EVO/W12 e não precisam ser digitados pelo cliente.</small>
     </div> : <form onSubmit={checkProtocol}>
-      <div className="self-service-title"><span>IDENTIDADE CONFIRMADA</span><h2>Consulte seu protocolo</h2><p>Informe somente o protocolo. Sua identidade já foi validada com CPF, nascimento e código enviado ao e-mail cadastrado.</p></div>
+      <div className="self-service-title"><span>IDENTIDADE CONFIRMADA</span><h2>Consulte seu protocolo</h2><p>Informe somente o protocolo. Sua identidade já foi validada.</p></div>
       <label>Protocolo<input value={protocol} onChange={e=>setProtocol(e.target.value.toUpperCase())} placeholder="Ex.: EV-..." autoComplete="off" required/></label>
       {error&&<div className="error-box" role="alert">{error}</div>}
       <button className="btn primary full" disabled={loading||!protocol}>{loading?"Consultando...":"Consultar"}</button>
