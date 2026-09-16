@@ -3,6 +3,7 @@ import { getCustomerSession } from "@/lib/security/session";
 import { assertTrustedOrigin, requestFingerprint } from "@/lib/security/request";
 import { configuredLimit, enforceRateLimit } from "@/lib/security/rate-limit";
 import { validateSignedDocument } from "@/lib/documents/file-security";
+import { encryptBytes } from "@/lib/security/crypto";
 
 export async function POST(req: Request) {
   try {
@@ -23,12 +24,23 @@ export async function POST(req: Request) {
 
     const bytes = Buffer.from(await file.arrayBuffer());
     const meta = validateSignedDocument(file, bytes);
+    const encryptedContent = encryptBytes(bytes);
     const fingerprint = requestFingerprint(req);
     const now = new Date();
     const att = await prisma.$transaction(async tx => {
-      const attachment = await tx.attachment.create({ data: { requestId: cancellation.id, type: "SIGNED_CANCELLATION_TERM", ...meta, malwareStatus: "VALIDATED", content: bytes, storageMode: "DATABASE", uploadedBy: "CUSTOMER" } });
+      const attachment = await tx.attachment.create({
+        data: {
+          requestId: cancellation.id,
+          type: "SIGNED_CANCELLATION_TERM",
+          ...meta,
+          malwareStatus: "VALIDATED",
+          content: encryptedContent,
+          storageMode: "DATABASE_ENCRYPTED_V1",
+          uploadedBy: "CUSTOMER"
+        }
+      });
       await tx.cancellationRequest.update({ where: { id: cancellation.id }, data: { status: "SIGNED_RECEIVED", signedTermReceivedAt: now } });
-      await tx.auditEvent.create({ data: { requestId: cancellation.id, action: "SIGNED_TERM_UPLOADED", entity: "Attachment", entityId: attachment.id, after: { sha256: meta.sha256, mimeType: meta.mimeType, sizeBytes: meta.sizeBytes }, ...fingerprint } });
+      await tx.auditEvent.create({ data: { requestId: cancellation.id, action: "SIGNED_TERM_UPLOADED", entity: "Attachment", entityId: attachment.id, after: { sha256: meta.sha256, mimeType: meta.mimeType, sizeBytes: meta.sizeBytes, storageMode: "DATABASE_ENCRYPTED_V1" }, ...fingerprint } });
       return attachment;
     });
     return Response.json({ ok: true, attachmentId: att.id, status: "SIGNED_RECEIVED", message: "Termo assinado recebido." });
