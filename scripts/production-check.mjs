@@ -34,6 +34,19 @@ if (Object.keys(process.env).some(k => k.startsWith("NEXT_PUBLIC_EVO_") || k ===
 if (process.env.NEXT_PUBLIC_DEMO_MODE === "true" && process.env.NODE_ENV === "production") errors.push("NEXT_PUBLIC_DEMO_MODE must be false in production");
 if (process.env.CUSTOMER_DIRECT_CANCELLATION === "true") errors.push("CUSTOMER_DIRECT_CANCELLATION must remain false; owner approval is mandatory");
 
+function validApiPath(name, requiredPath = false) {
+  const value = process.env[name]?.trim();
+  if (!value) {
+    if (requiredPath) errors.push(`${name} is required`);
+    return false;
+  }
+  if (!value.startsWith("/") || value.includes("://")) {
+    errors.push(`${name} must be an API path, not an absolute URL`);
+    return false;
+  }
+  return true;
+}
+
 const mode = process.env.EVO_INTEGRATION_MODE || "manual";
 if (!["manual","read","write"].includes(mode)) errors.push("EVO_INTEGRATION_MODE must be manual, read or write");
 if (["read","write"].includes(mode)) {
@@ -52,27 +65,27 @@ if (["read","write"].includes(mode)) {
     errors.push("Configure complete EVO credentials for Condor and Umarizal, or a complete fallback EVO profile");
   }
 
-  for (const pathName of ["EVO_MEMBER_BY_ID_PATH", "EVO_CONTRACTS_BY_MEMBER_PATH"]) {
-    const value = process.env[pathName]?.trim();
-    if (!value) errors.push(`${pathName} is required in ${mode} mode`);
-    else if (!value.startsWith("/") || value.includes("://")) errors.push(`${pathName} must be an API path, not an absolute URL`);
-  }
-
-  for (const optionalPath of ["EVO_MEMBERS_PATH", "EVO_MEMBER_PROFILE_PATH"]) {
-    const value = process.env[optionalPath]?.trim();
-    if (value && (!value.startsWith("/") || value.includes("://"))) errors.push(`${optionalPath} must be an API path, not an absolute URL`);
+  validApiPath("EVO_MEMBERS_PATH", false);
+  const usesActiveClientProfile = Boolean(process.env.EVO_ACTIVE_CLIENTS_PATH?.trim());
+  if (usesActiveClientProfile) {
+    validApiPath("EVO_ACTIVE_CLIENTS_PATH", true);
+    validApiPath("EVO_MEMBER_PROFILE_PATH", true);
+  } else {
+    validApiPath("EVO_MEMBER_BY_ID_PATH", true);
+    validApiPath("EVO_CONTRACTS_BY_MEMBER_PATH", true);
+    validApiPath("EVO_CONTRACT_BY_ID_PATH", false);
   }
 }
 
 if (mode === "write") {
   if (process.env.EVO_WRITE_ENABLED !== "true") errors.push("write mode requires explicit EVO_WRITE_ENABLED=true");
-  if (!process.env.EVO_CANCEL_CONTRACT_PATH?.trim()) errors.push("EVO_CANCEL_CONTRACT_PATH is required in write mode");
+  validApiPath("EVO_CANCEL_CONTRACT_PATH", true);
 } else if (process.env.EVO_WRITE_ENABLED === "true") {
   errors.push("EVO_WRITE_ENABLED cannot be true unless EVO_INTEGRATION_MODE=write");
 }
 
 if (process.env.EVO_REMOVE_PAYMENT_METHOD_ENABLED === "true") {
-  if (!process.env.EVO_REMOVE_PAYMENT_METHOD_PATH?.trim()) errors.push("EVO_REMOVE_PAYMENT_METHOD_PATH is required when payment-method removal is enabled");
+  validApiPath("EVO_REMOVE_PAYMENT_METHOD_PATH", true);
   if (!(mode === "write" && process.env.EVO_WRITE_ENABLED === "true")) errors.push("payment-method removal requires EVO write mode");
 }
 
