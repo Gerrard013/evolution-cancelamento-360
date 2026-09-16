@@ -28,6 +28,20 @@ for (const file of walk(path.join(root, "src"))) {
   }
 }
 
+// Every browser-facing mutation endpoint must enforce same-site origin protection.
+// The EVO webhook is the only exception: it is called server-to-server and has its
+// own signature authentication instead of browser Origin headers.
+const apiRoot = path.join(root, "src", "app", "api");
+for (const file of walk(apiRoot)) {
+  if (!file.endsWith("route.ts")) continue;
+  const relative = path.relative(root, file).replaceAll("\\", "/");
+  const text = fs.readFileSync(file, "utf8");
+  const hasMutation = /export\s+async\s+function\s+(POST|PUT|PATCH|DELETE)\s*\(/.test(text);
+  if (!hasMutation) continue;
+  if (relative === "src/app/api/evo/webhook/route.ts") continue;
+  if (!text.includes("assertTrustedOrigin(")) failures.push(`${relative} has a mutation handler without assertTrustedOrigin`);
+}
+
 const gitignore = fs.readFileSync(path.join(root, ".gitignore"), "utf8");
 if (!gitignore.split(/\r?\n/).includes(".env")) failures.push(".gitignore must ignore .env");
 
