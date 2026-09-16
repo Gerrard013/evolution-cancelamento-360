@@ -1,12 +1,12 @@
 import { z } from "zod";
 import { prisma } from "@/lib/db/prisma";
 import { requireAdminApi } from "@/lib/auth/require-admin";
-import { assertTrustedOrigin, readJsonLimited } from "@/lib/security/request";
+import { assertTrustedOrigin, readJsonLimited, requestFingerprint } from "@/lib/security/request";
 import { generatePublicAccessCode, hashPublicAccessCode } from "@/lib/security/crypto";
 
 const schema = z.object({
   contractId: z.string().cuid(),
-  validDays: z.number().int().min(1).max(90).default(7)
+  validDays: z.number().int().min(1).max(1).default(1)
 });
 
 export async function POST(req: Request) {
@@ -15,7 +15,16 @@ export async function POST(req: Request) {
     const admin = await requireAdminApi();
     const input = schema.parse(await readJsonLimited(req, 8_192));
     const contract = await prisma.contract.findUnique({ where: { id: input.contractId } });
-    if (!contract) return Response.json({ error: "Contrato não encontrado" }, { status: 404 });
+    if (!contract || contract.status !== "ACTIVE") {
+      return Response.json({ error: "Contrato ativo não encontrado." }, { status: 404 });
+    }
+
+    // Invalidate any older unused attendance code for the same contract before
+    // issuing a new one. This prevents multiple live bypass codes for one member.
+    await prisma.publicAccessGrant.updateMany({
+      where: { contractId: contract.id, active: true },
+      data: { active: false }
+    });
 
     const code = generatePublicAccessCode();
     const grant = await prisma.publicAccessGrant.create({
@@ -27,7 +36,17 @@ export async function POST(req: Request) {
         createdBy: admin.sub
       }
     });
-    return Response.json({ id: grant.id, accessId: code, expiresAt: grant.expiresAt, warning: "Exiba o ID somente ao cliente correto. O sistema armazena apenas o hash." }, { status: 201 });
+    const fp = requestFingerprint(req);
+    await prisma.auditEvent.create({
+      data: {
+        action: "PUBLIC_ACCESS_GRANT_CREATED",
+        entity: "PublicAccessGrant",
+        entityId: grant.id,
+        after: { contractId: contract.id, expiresAt: grant.expiresAt.toISOString(), by: admin.sub },
+        ...fp
+      }
+    });
+    return Response.json({ id: grant.id, accessId: code, expiresAt: grant.expiresAt, warning: "Exiba o ID somente ao cliente correto. O sistema armazena apenas o hash e invalida códigos anteriores." }, { status: 201 });
   } catch (error) {
     if (error instanceof Response) return error;
     if (error instanceof z.ZodError) return Response.json({ error: "Dados inválidos" }, { status: 400 });
