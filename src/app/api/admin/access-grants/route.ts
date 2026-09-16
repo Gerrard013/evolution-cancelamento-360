@@ -13,6 +13,9 @@ export async function POST(req: Request) {
   try {
     assertTrustedOrigin(req);
     const admin = await requireAdminApi();
+    if (!admin.role || !["OWNER", "ADMIN", "MANAGER"].includes(admin.role)) {
+      return Response.json({ error: "Este perfil não pode gerar código de atendimento." }, { status: 403 });
+    }
     const input = schema.parse(await readJsonLimited(req, 8_192));
     const contract = await prisma.contract.findUnique({ where: { id: input.contractId } });
     if (!contract || contract.status !== "ACTIVE") {
