@@ -26,9 +26,11 @@ export default function AdminTools() {
   const [loading, setLoading] = useState(false);
   const [manualMode,setManualMode]=useState(false);
   const [manual,setManual]=useState<ManualForm>(initialManual);
+  const [accessCode,setAccessCode]=useState("");
+  const [accessExpiresAt,setAccessExpiresAt]=useState("");
 
   async function sync() {
-    setMessage(""); setContracts([]); setManualMode(false); setLoading(true);
+    setMessage(""); setContracts([]); setManualMode(false); setAccessCode(""); setAccessExpiresAt(""); setLoading(true);
     try {
       const r = await fetch("/api/admin/evo/sync", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ memberId, unit: searchUnit }) });
       const data = await r.json();
@@ -47,27 +49,33 @@ export default function AdminTools() {
   }
 
   async function saveManual() {
-    setLoading(true);setMessage("");
+    setLoading(true);setMessage("");setAccessCode("");setAccessExpiresAt("");
     try{
       const payload={memberId,displayName:manual.displayName,unit:manual.unit,planName:manual.planName,planType:manual.planType,startDate:manual.startDate,endDate:manual.endDate||null,amountPaid:Number(manual.amountPaid||0),recurring:manual.recurring};
       const r=await fetch("/api/admin/manual/customer-contract",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
       const data=await r.json();
       if(!r.ok)throw new Error(data.error||"Não foi possível salvar o contrato");
-      setCustomerName(data.customer.displayName);setContracts([data.contract]);setManualMode(false);setMessage("Cadastro pronto. Agora clique em Atender aluno agora.");
+      setCustomerName(data.customer.displayName);setContracts([data.contract]);setManualMode(false);setMessage("Cadastro pronto. Agora gere um código de atendimento para o aluno.");
     }catch(e){setMessage(e instanceof Error?e.message:"Falha");}finally{setLoading(false);}
   }
 
   async function issue(contractId: string) {
-    setMessage(""); setLoading(true);
+    setMessage(""); setAccessCode(""); setAccessExpiresAt(""); setLoading(true);
     try {
       const r = await fetch("/api/admin/access-grants", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contractId, validDays: 1 }) });
       const data = await r.json();
-      if (!r.ok) throw new Error(data.error || "Falha ao iniciar o atendimento");
-      const sessionResponse = await fetch("/api/public/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accessId: data.accessId }) });
-      const sessionData = await sessionResponse.json().catch(() => ({}));
-      if (!sessionResponse.ok) throw new Error(sessionData.error || "Não foi possível abrir o formulário do aluno");
-      window.location.href = "/cliente";
-    } catch (e) { setMessage(e instanceof Error ? e.message : "Falha"); setLoading(false); }
+      if (!r.ok) throw new Error(data.error || "Falha ao gerar código de atendimento");
+      setAccessCode(String(data.accessId||""));
+      setAccessExpiresAt(String(data.expiresAt||""));
+      setMessage("Código gerado. Entregue-o somente ao aluno correto. Ele será inutilizado no primeiro acesso.");
+    } catch (e) { setMessage(e instanceof Error ? e.message : "Falha"); }
+    finally { setLoading(false); }
+  }
+
+  async function copyAccessCode() {
+    if (!accessCode) return;
+    try { await navigator.clipboard.writeText(accessCode); setMessage("Código copiado."); }
+    catch { setMessage("Copie o código exibido abaixo."); }
   }
 
   async function logout() { await fetch("/api/auth/admin/logout", { method: "POST" }); location.href = "/equipe/login"; }
@@ -88,7 +96,9 @@ export default function AdminTools() {
       </div><button className="btn primary" disabled={loading||!manual.displayName.trim()||!manual.planName.trim()||!manual.startDate} onClick={saveManual}>Salvar e continuar</button></div>}
 
       {customerName&&contracts.length>0&&<div className="customer-found"><span>Aluno localizado</span><h3>{customerName}</h3><small>Matrícula EVO: {memberId}</small></div>}
-      {contracts.length>0&&<div className="synced-contracts clean-contracts">{contracts.map(c=><div key={c.id} className="evo-contract-card"><div className="evo-contract-main"><span className="refund-status paid">{c.status==="ACTIVE"?"ATIVO":c.status}</span><h3>{c.planName}</h3><p>{c.unit} • {c.planType||"Plano"} {c.recurring?"• Recorrente":""}</p></div><div className="evo-contract-data"><span><small>Início</small><b>{date(c.startDate)}</b></span><span><small>Fim</small><b>{date(c.endDate)}</b></span><span><small>Valor registrado</small><b>{money(c.amountPaid)}</b></span><span><small>Última sincronização</small><b>{c.syncedAt?date(c.syncedAt):"Agora"}</b></span></div><button onClick={()=>issue(c.id)} disabled={loading||c.status!=="ACTIVE"}>{loading?"Abrindo...":"Atender aluno agora"}</button></div>)}</div>}
+      {contracts.length>0&&<div className="synced-contracts clean-contracts">{contracts.map(c=><div key={c.id} className="evo-contract-card"><div className="evo-contract-main"><span className="refund-status paid">{c.status==="ACTIVE"?"ATIVO":c.status}</span><h3>{c.planName}</h3><p>{c.unit} • {c.planType||"Plano"} {c.recurring?"• Recorrente":""}</p></div><div className="evo-contract-data"><span><small>Início</small><b>{date(c.startDate)}</b></span><span><small>Fim</small><b>{date(c.endDate)}</b></span><span><small>Valor registrado</small><b>{money(c.amountPaid)}</b></span><span><small>Última sincronização</small><b>{c.syncedAt?date(c.syncedAt):"Agora"}</b></span></div><button onClick={()=>issue(c.id)} disabled={loading||c.status!=="ACTIVE"}>{loading?"Gerando...":"Gerar código de atendimento"}</button></div>)}</div>}
+
+      {accessCode&&<div className="info-box"><strong>Código de atendimento</strong><div style={{fontSize:"1.35rem",fontWeight:800,letterSpacing:".08em",margin:"8px 0"}}>{accessCode}</div><small>{accessExpiresAt?`Válido até ${new Date(accessExpiresAt).toLocaleString("pt-BR")}. `:""}Uso único. Não envie para terceiros.</small><div><button type="button" className="btn secondary" onClick={copyAccessCode}>Copiar código</button></div></div>}
       {message&&<div className="info-box">{message}</div>}
     </section>
   );
