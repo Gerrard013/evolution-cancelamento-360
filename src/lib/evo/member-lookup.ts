@@ -18,6 +18,22 @@ function baseUrl() {
   return url;
 }
 
+function configuredPath(name: string, fallback: string, params: Record<string, string> = {}) {
+  const template = process.env[name]?.trim() || fallback;
+  if (!template.startsWith("/") || template.includes("://")) throw new Error(`${name}_INVALID_PATH`);
+  return template.replace(/\{([^}]+)\}/g, (_, key: string) => {
+    const value = params[key];
+    if (value === undefined) throw new Error(`${name}_MISSING_PARAM_${key}`);
+    return encodeURIComponent(value);
+  });
+}
+
+function configuredQueryParam(name: string, fallback: string) {
+  const value = process.env[name]?.trim() || fallback;
+  if (!/^[A-Za-z0-9_.-]+$/.test(value)) throw new Error(`${name}_INVALID`);
+  return value;
+}
+
 function objectOf(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
@@ -145,14 +161,18 @@ function basicCandidateBirthDate(data: Record<string, unknown>) {
 }
 
 async function findProfileFromBasic(profile: EvoCredentialProfile, filter: "document" | "email", value: string, expectedBirthDate?: string) {
-  const raw = await evoGet("/api/v1/members/basic", profile, {
-    [filter]: value,
+  const membersPath = configuredPath("EVO_MEMBERS_PATH", "/api/v1/members");
+  const queryParam = filter === "document"
+    ? configuredQueryParam("EVO_MEMBER_CPF_QUERY_PARAM", "document")
+    : configuredQueryParam("EVO_MEMBER_EMAIL_QUERY_PARAM", "email");
+  const raw = await evoGet(membersPath, profile, {
+    [queryParam]: value,
     take: "25",
     skip: "0"
   });
   const candidates = memberArray(raw);
 
-  console.info("[EVO_BASIC_LOOKUP]", JSON.stringify({
+  console.info("[EVO_MEMBER_LOOKUP]", JSON.stringify({
     profile: profile.key,
     filter,
     candidateCount: candidates.length,
@@ -167,7 +187,12 @@ async function findProfileFromBasic(profile: EvoCredentialProfile, filter: "docu
     const candidateBirthDate = basicCandidateBirthDate(candidate);
     if (expectedBirthDate && candidateBirthDate && candidateBirthDate !== expectedBirthDate) continue;
 
-    const profileRaw = await evoGet(`/api/v1/members/${encodeURIComponent(id)}`, profile);
+    const profilePath = configuredPath("EVO_MEMBER_PROFILE_PATH", "/api/v1/members/{idMember}", {
+      id: id,
+      idMember: id,
+      memberId: id
+    });
+    const profileRaw = await evoGet(profilePath, profile);
     const member = mapProfile(profileRaw, profile);
     console.info("[EVO_PROFILE_LOOKUP]", JSON.stringify({
       profile: profile.key,
