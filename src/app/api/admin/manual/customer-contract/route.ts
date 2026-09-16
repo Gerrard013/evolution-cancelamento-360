@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db/prisma";
 import { requireAdminApi } from "@/lib/auth/require-admin";
 import { assertTrustedOrigin, readJsonLimited } from "@/lib/security/request";
 import { encryptText, hmac } from "@/lib/security/crypto";
+import { canonicalEvoProfile } from "@/lib/evo/sync-service";
 
 const schema = z.object({
   memberId: z.string().trim().min(1).max(100).regex(/^[A-Za-z0-9._-]+$/),
@@ -21,8 +22,12 @@ export async function POST(req: Request) {
     assertTrustedOrigin(req);
     await requireAdminApi();
     const input = schema.parse(await readJsonLimited(req, 24_000));
+    if (input.endDate && input.endDate < input.startDate) {
+      return Response.json({ error: "A data final não pode ser anterior ao início do contrato." }, { status: 400 });
+    }
 
-    const memberHash = hmac(input.memberId, "EXTERNAL_ID_PEPPER");
+    const evoProfile = canonicalEvoProfile(input.unit);
+    const memberHash = hmac(`${evoProfile}:${input.memberId}`, "EXTERNAL_ID_PEPPER");
     const customer = await prisma.customer.upsert({
       where: { externalIdHash: memberHash },
       create: {
@@ -47,6 +52,7 @@ export async function POST(req: Request) {
       orderBy: { syncedAt: "desc" },
     });
 
+    const metadata = { source: "MANUAL_OPERATIONAL", evoMemberIdPresent: true, evoProfile };
     const contract = existing
       ? await prisma.contract.update({
           where: { id: existing.id },
@@ -56,7 +62,7 @@ export async function POST(req: Request) {
             amountPaid: input.amountPaid,
             recurring: input.recurring,
             status: "ACTIVE",
-            metadata: { source: "MANUAL_OPERATIONAL", evoMemberIdPresent: true },
+            metadata,
             syncedAt: new Date(),
           },
         })
@@ -71,7 +77,7 @@ export async function POST(req: Request) {
             amountPaid: input.amountPaid,
             recurring: input.recurring,
             status: "ACTIVE",
-            metadata: { source: "MANUAL_OPERATIONAL", evoMemberIdPresent: true },
+            metadata,
             syncedAt: new Date(),
           },
         });
