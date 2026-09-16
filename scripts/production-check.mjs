@@ -1,5 +1,5 @@
 const required = [
-  "DATABASE_URL","APP_ORIGIN","SESSION_SECRET","PUBLIC_ID_PEPPER","EXTERNAL_ID_PEPPER",
+  "DATABASE_URL","APP_ORIGIN","TRUSTED_ORIGINS","SESSION_SECRET","PUBLIC_ID_PEPPER","EXTERNAL_ID_PEPPER",
   "IDENTITY_CODE_PEPPER","APP_DATA_ENCRYPTION_KEY","IP_HASH_PEPPER"
 ];
 const missing = required.filter(k => !process.env[k]?.trim());
@@ -29,7 +29,21 @@ const admins = [1,2].filter(n => process.env[`ADMIN_${n}_USERNAME`]?.trim() && p
 const legacyAdmin = Boolean(process.env.ADMIN_EMAIL?.trim() && process.env.ADMIN_PASSWORD_HASH?.trim());
 if (!admins.length && !legacyAdmin && !ownerUser) errors.push("Configure at least one administrative account");
 
-if (process.env.APP_ORIGIN && !/^https:\/\//.test(process.env.APP_ORIGIN) && process.env.NODE_ENV === "production") errors.push("APP_ORIGIN must use HTTPS in production");
+function validateHttpsOrigin(value, label) {
+  if (!value?.trim()) return;
+  try {
+    const url = new URL(value.trim());
+    if (url.protocol !== "https:" || url.origin !== value.trim().replace(/\/$/, "")) errors.push(`${label} must be an HTTPS origin without path/query`);
+  } catch {
+    errors.push(`${label} is not a valid URL origin`);
+  }
+}
+
+validateHttpsOrigin(process.env.APP_ORIGIN, "APP_ORIGIN");
+for (const [index, origin] of (process.env.TRUSTED_ORIGINS || "").split(",").map(v => v.trim()).filter(Boolean).entries()) {
+  validateHttpsOrigin(origin, `TRUSTED_ORIGINS[${index}]`);
+}
+
 if (Object.keys(process.env).some(k => k.startsWith("NEXT_PUBLIC_EVO_") || k === "NEXT_PUBLIC_EVO_API_TOKEN")) errors.push("EVO secrets must never use NEXT_PUBLIC_");
 if (process.env.NEXT_PUBLIC_DEMO_MODE === "true" && process.env.NODE_ENV === "production") errors.push("NEXT_PUBLIC_DEMO_MODE must be false in production");
 if (process.env.CUSTOMER_DIRECT_CANCELLATION === "true") errors.push("CUSTOMER_DIRECT_CANCELLATION must remain false; owner approval is mandatory");
@@ -65,7 +79,10 @@ if (["read","write"].includes(mode)) {
     errors.push("Configure complete EVO credentials for Condor and Umarizal, or a complete fallback EVO profile");
   }
 
-  validApiPath("EVO_MEMBERS_PATH", false);
+  validApiPath("EVO_MEMBERS_PATH", true);
+  const cpfParam = process.env.EVO_MEMBER_CPF_QUERY_PARAM?.trim();
+  if (!cpfParam || !/^[A-Za-z0-9_.-]+$/.test(cpfParam)) errors.push("EVO_MEMBER_CPF_QUERY_PARAM must be configured with a valid query parameter name");
+
   const usesActiveClientProfile = Boolean(process.env.EVO_ACTIVE_CLIENTS_PATH?.trim());
   if (usesActiveClientProfile) {
     validApiPath("EVO_ACTIVE_CLIENTS_PATH", true);
