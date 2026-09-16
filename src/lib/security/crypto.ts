@@ -1,5 +1,7 @@
 import crypto from "node:crypto";
 
+const BINARY_MAGIC = Buffer.from("EV360E1", "ascii");
+
 function required(name: string): string {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`Missing required secret: ${name}`);
@@ -55,6 +57,31 @@ export function decryptText(cipherText: string): string {
   const decipher = crypto.createDecipheriv("aes-256-gcm", encryptionKey(), Buffer.from(ivB64, "base64url"));
   decipher.setAuthTag(Buffer.from(tagB64, "base64url"));
   return Buffer.concat([decipher.update(Buffer.from(dataB64, "base64url")), decipher.final()]).toString("utf8");
+}
+
+export function encryptBytes(plainBytes: Buffer | Uint8Array): Buffer {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", encryptionKey(), iv);
+  const encrypted = Buffer.concat([cipher.update(Buffer.from(plainBytes)), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return Buffer.concat([BINARY_MAGIC, iv, tag, encrypted]);
+}
+
+export function decryptBytes(cipherBytes: Buffer | Uint8Array): Buffer {
+  const data = Buffer.from(cipherBytes);
+  const minimumLength = BINARY_MAGIC.length + 12 + 16;
+  if (data.length < minimumLength || !data.subarray(0, BINARY_MAGIC.length).equals(BINARY_MAGIC)) {
+    throw new Error("Invalid encrypted binary payload");
+  }
+  const ivStart = BINARY_MAGIC.length;
+  const tagStart = ivStart + 12;
+  const bodyStart = tagStart + 16;
+  const iv = data.subarray(ivStart, tagStart);
+  const tag = data.subarray(tagStart, bodyStart);
+  const encrypted = data.subarray(bodyStart);
+  const decipher = crypto.createDecipheriv("aes-256-gcm", encryptionKey(), iv);
+  decipher.setAuthTag(tag);
+  return Buffer.concat([decipher.update(encrypted), decipher.final()]);
 }
 
 export function constantTimeEqual(a: string, b: string): boolean {
