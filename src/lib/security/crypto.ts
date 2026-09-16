@@ -8,6 +8,12 @@ function required(name: string): string {
   return value;
 }
 
+function ownedBytes(input: Buffer | Uint8Array): Uint8Array<ArrayBuffer> {
+  const out = new Uint8Array(input.byteLength);
+  out.set(input);
+  return out;
+}
+
 export function sha256(value: string | Buffer): string {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
@@ -59,15 +65,15 @@ export function decryptText(cipherText: string): string {
   return Buffer.concat([decipher.update(Buffer.from(dataB64, "base64url")), decipher.final()]).toString("utf8");
 }
 
-export function encryptBytes(plainBytes: Buffer | Uint8Array): Buffer {
+export function encryptBytes(plainBytes: Buffer | Uint8Array): Uint8Array<ArrayBuffer> {
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv("aes-256-gcm", encryptionKey(), iv);
   const encrypted = Buffer.concat([cipher.update(Buffer.from(plainBytes)), cipher.final()]);
   const tag = cipher.getAuthTag();
-  return Buffer.concat([BINARY_MAGIC, iv, tag, encrypted]);
+  return ownedBytes(Buffer.concat([BINARY_MAGIC, iv, tag, encrypted]));
 }
 
-export function decryptBytes(cipherBytes: Buffer | Uint8Array): Buffer {
+export function decryptBytes(cipherBytes: Buffer | Uint8Array): Uint8Array<ArrayBuffer> {
   const data = Buffer.from(cipherBytes);
   const minimumLength = BINARY_MAGIC.length + 12 + 16;
   if (data.length < minimumLength || !data.subarray(0, BINARY_MAGIC.length).equals(BINARY_MAGIC)) {
@@ -81,7 +87,7 @@ export function decryptBytes(cipherBytes: Buffer | Uint8Array): Buffer {
   const encrypted = data.subarray(bodyStart);
   const decipher = crypto.createDecipheriv("aes-256-gcm", encryptionKey(), iv);
   decipher.setAuthTag(tag);
-  return Buffer.concat([decipher.update(encrypted), decipher.final()]);
+  return ownedBytes(Buffer.concat([decipher.update(encrypted), decipher.final()]));
 }
 
 export function constantTimeEqual(a: string, b: string): boolean {
