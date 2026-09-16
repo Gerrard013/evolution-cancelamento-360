@@ -18,6 +18,10 @@ export async function POST(req: Request) {
   } catch (error) {
     if (error instanceof Response) return error;
     if (error instanceof z.ZodError) return Response.json({ error: "Data inválida." }, { status: 400 });
+    const code = error instanceof Error ? error.message : "PREVIEW_ERROR";
+    if (["DESIRED_DATE_IN_PAST", "DESIRED_DATE_BEFORE_CONTRACT_START"].includes(code)) {
+      return Response.json({ error: "A data pretendida para o cancelamento não pode estar no passado ou antes do início do contrato." }, { status: 400 });
+    }
     return Response.json({ error: "Não foi possível calcular os valores agora." }, { status: 500 });
   }
 }
