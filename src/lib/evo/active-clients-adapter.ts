@@ -135,10 +135,14 @@ function customerFromProfile(data: Record<string, unknown>): EvoCustomer | null 
 }
 
 function membershipStatus(value: unknown) {
-  const raw = str(value)?.trim() || "ACTIVE";
+  const raw = str(value)?.trim();
+  if (!raw) return "UNKNOWN";
   const upper = raw.toUpperCase();
-  if (upper.includes("ATIV") || upper.includes("ACTIVE") || upper.includes("VIGENT")) return "ACTIVE";
-  return raw;
+  const configured = (process.env.EVO_ACTIVE_CONTRACT_STATUSES || "ACTIVE,ATIVO,ATIVA,VIGENTE,OPEN,1")
+    .split(",")
+    .map(item => item.trim().toUpperCase())
+    .filter(Boolean);
+  return configured.includes(upper) ? "ACTIVE" : upper;
 }
 
 function contractsFromProfile(data: Record<string, unknown>, customerExternalId: string): EvoContract[] {
