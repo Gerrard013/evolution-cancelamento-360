@@ -42,6 +42,13 @@ function trustedOrigins(req: Request) {
     if (origin) allowed.add(origin);
   }
 
+  // Requests submitted from the same HTTPS origin are valid CSRF-wise even when
+  // Railway exposes the app through more than one bound hostname (custom + fallback).
+  // This does not trust arbitrary third-party origins: the browser Origin must match
+  // the actual request URL origin received by the application.
+  const requestOrigin = normalizeOrigin(new URL(req.url).origin);
+  if (requestOrigin) allowed.add(requestOrigin);
+
   if (process.env.NODE_ENV !== "production") {
     allowed.add(new URL(req.url).origin);
   }
