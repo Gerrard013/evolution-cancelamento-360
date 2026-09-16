@@ -41,7 +41,8 @@ export async function POST(req: Request) {
     const existing = await prisma.cancellationRequest.findUnique({ where: { activeKey: `${contract.id}:ACTIVE` } });
     if (existing) return Response.json({ error: `Já existe uma solicitação aberta para este contrato. Protocolo ${existing.protocol}.`, protocol: existing.protocol, status: existing.status }, { status: 409 });
 
-    const preview = await previewForContract(contract.id, input.desiredDate).catch(() => null);
+    // Fail closed: values and dates must be valid before a legal term/protocol is created.
+    const preview = await previewForContract(contract.id, input.desiredDate);
     const protocol = newProtocol();
     const fingerprint = requestFingerprint(req);
     const slaHours = Math.min(168, Math.max(1, Number(process.env.DEFAULT_SLA_HOURS || 48)));
@@ -69,10 +70,10 @@ export async function POST(req: Request) {
           pixKeyCiphertext: input.pixKey ? encryptText(input.pixKey) : null,
           privacyConsentVersion: PRIVACY_VERSION,
           privacyConsentAt: now,
-          cancellationFee: preview?.kind === "RECURRING" && preview.feeRequired ? preview.feeAmount : 0
+          cancellationFee: preview.kind === "RECURRING" && preview.feeRequired ? preview.feeAmount : 0
         }
       });
-      if (preview?.kind === "ANNUAL" && preview.eligible) {
+      if (preview.kind === "ANNUAL" && preview.eligible) {
         await tx.refundCalculation.create({
           data: {
             requestId: request.id,
@@ -103,6 +104,10 @@ export async function POST(req: Request) {
   } catch (error) {
     if (error instanceof Response) return error;
     if (error instanceof z.ZodError) return Response.json({ error: "Confira os dados do pedido, RG, endereço e aceite de privacidade antes de continuar." }, { status: 400 });
+    const code = error instanceof Error ? error.message : "CANCEL_ERROR";
+    if (["DESIRED_DATE_IN_PAST", "DESIRED_DATE_BEFORE_CONTRACT_START"].includes(code)) {
+      return Response.json({ error: "A data pretendida para o cancelamento não pode estar no passado ou antes do início do contrato." }, { status: 400 });
+    }
     return Response.json({ error: "Não foi possível gerar o termo de cancelamento" }, { status: 500 });
   }
 }
