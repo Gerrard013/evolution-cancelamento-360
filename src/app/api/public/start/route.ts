@@ -30,12 +30,7 @@ function validCpf(value: string) {
 }
 
 function normalizeName(value: string) {
-  return value
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toUpperCase();
+  return value.normalize("NFD").replace(/\p{Diacritic}/gu, "").replace(/\s+/g, " ").trim().toUpperCase();
 }
 
 function normalizeEmail(value: string) {
@@ -57,10 +52,10 @@ function publicIntegrationError(error: unknown) {
   if (message.includes("EVO_HTTP_403")) return { status: 502, error: "A integração com o EVO não tem permissão suficiente. Código EVO-403." };
   if (message.includes("EVO_HTTP_429")) return { status: 503, error: "A validação está temporariamente indisponível. Tente novamente em alguns minutos." };
   if (message.includes("EVO_FETCH_TIMEOUT") || message.includes("EVO_BODY_TIMEOUT") || message.includes("EVO_USAGE_TIMEOUT")) return { status: 504, error: "O EVO demorou mais que o esperado para responder. Tente novamente." };
-  if (message.includes("RESEND_HTTP_403")) return { status: 503, error: "A identidade foi localizada no EVO, mas o domínio de e-mail da Evolution ainda não está autorizado para enviar o código." };
-  if (message.includes("RESEND_HTTP_401")) return { status: 503, error: "O serviço de envio do código precisa ser reautorizado." };
-  if (message.includes("RESEND_TIMEOUT")) return { status: 503, error: "O serviço de envio do código demorou para responder. Tente novamente." };
-  if (message.includes("SMTP_NOT_CONFIGURED") || message.includes("SMTP_FROM_NOT_CONFIGURED") || message.includes("RESEND_API_KEY_NOT_CONFIGURED")) return { status: 503, error: "O envio do código de confirmação ainda não está configurado." };
+  if (message.includes("RESEND_HTTP_400") || message.includes("RESEND_HTTP_403")) return { status: 503, error: "Sua identidade foi localizada no EVO, mas o envio por e-mail está indisponível. Use o código de atendimento fornecido pela equipe Evolution." };
+  if (message.includes("RESEND_HTTP_401")) return { status: 503, error: "O serviço de envio do código precisa ser reautorizado. Use o código de atendimento enquanto isso." };
+  if (message.includes("RESEND_TIMEOUT")) return { status: 503, error: "O serviço de e-mail demorou para responder. Use o código de atendimento ou tente novamente." };
+  if (message.includes("SMTP_NOT_CONFIGURED") || message.includes("SMTP_FROM_NOT_CONFIGURED") || message.includes("RESEND_API_KEY_NOT_CONFIGURED")) return { status: 503, error: "O envio por e-mail está indisponível. Use o código de atendimento fornecido pela equipe Evolution." };
   if (message.includes("EVO_")) return { status: 502, error: "Não foi possível validar os dados no EVO agora. Tente novamente em instantes." };
   return { status: 500, error: "Não foi possível iniciar a validação agora." };
 }
@@ -86,15 +81,12 @@ export async function POST(req: Request) {
 
     const cpfMatches = Boolean(member?.cpf && normalizeCpf(member.cpf) === cpf);
     const birthMatches = Boolean(member?.birthDate && member.birthDate === input.birthDate);
-
     if (!member || !cpfMatches || !birthMatches) {
       return Response.json({ error: "Não foi possível confirmar CPF e data de nascimento com o cadastro da Evolution." }, { status: 401 });
     }
 
     const email = normalizeEmail(member.email);
-    if (!email) {
-      return Response.json({ error: "Seu cadastro no EVO não possui um e-mail válido para confirmação. Procure a equipe Evolution." }, { status: 409 });
-    }
+    if (!email) return Response.json({ error: "Seu cadastro no EVO não possui um e-mail válido para confirmação. Use o código de atendimento da equipe Evolution." }, { status: 409 });
 
     const code = String(crypto.randomInt(100000, 1000000));
     const ttlMinutes = Math.min(20, Math.max(3, Number(process.env.OTP_TTL_MINUTES || 10)));
@@ -102,7 +94,6 @@ export async function POST(req: Request) {
     const memberRef = JSON.stringify({ memberId: member.externalId, profileKey: member.profileKey });
 
     await prisma.identityChallenge.deleteMany({ where: { expiresAt: { lt: new Date() } } }).catch(() => undefined);
-
     console.info("[IDENTITY_STAGE]", JSON.stringify({ stage: "challenge_write_begin", ms: Date.now() - startedAt }));
     const challenge = await prisma.identityChallenge.create({
       data: {
@@ -125,12 +116,7 @@ export async function POST(req: Request) {
       throw error;
     }
 
-    return Response.json({
-      challengeId: challenge.id,
-      emailHint: maskEmail(email),
-      expiresInMinutes: ttlMinutes,
-      message: "Código de confirmação enviado para o e-mail cadastrado no EVO."
-    });
+    return Response.json({ challengeId: challenge.id, emailHint: maskEmail(email), expiresInMinutes: ttlMinutes, message: "Código de confirmação enviado para o e-mail cadastrado no EVO." });
   } catch (error) {
     if (error instanceof Response) return error;
     if (error instanceof z.ZodError) return Response.json({ error: "Confira CPF e data de nascimento." }, { status: 400 });
