@@ -15,22 +15,51 @@ export function requestFingerprint(req: Request) {
   };
 }
 
+function normalizeOrigin(value: string | undefined): string | null {
+  const raw = value?.trim();
+  if (!raw) return null;
+  try {
+    const withScheme = raw.includes("://") ? raw : `https://${raw}`;
+    const url = new URL(withScheme);
+    if (url.protocol !== "https:" && process.env.NODE_ENV === "production") return null;
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+function trustedOrigins(req: Request) {
+  const allowed = new Set<string>();
+  const candidates = [
+    process.env.APP_ORIGIN,
+    process.env.RAILWAY_STATIC_URL,
+    process.env.RAILWAY_PUBLIC_DOMAIN,
+    process.env.RAILWAY_SERVICE_EVOLUTION_CANCELAMENTO_360_URL
+  ];
+
+  for (const candidate of candidates) {
+    const origin = normalizeOrigin(candidate);
+    if (origin) allowed.add(origin);
+  }
+
+  if (process.env.NODE_ENV !== "production") {
+    allowed.add(new URL(req.url).origin);
+  }
+  return allowed;
+}
+
 export function assertTrustedOrigin(req: Request): void {
-  const origin = req.headers.get("origin");
-  const configured = process.env.APP_ORIGIN?.replace(/\/$/, "");
+  const rawOrigin = req.headers.get("origin");
+  if (!rawOrigin) throw new Response("Origin required", { status: 403 });
 
-  if (process.env.NODE_ENV === "production" && !configured) {
-    throw new Response("APP_ORIGIN not configured", { status: 503 });
-  }
+  const origin = normalizeOrigin(rawOrigin);
+  if (!origin) throw new Response("Origin rejected", { status: 403 });
 
-  if (!origin) {
-    throw new Response("Origin required", { status: 403 });
+  const allowed = trustedOrigins(req);
+  if (process.env.NODE_ENV === "production" && allowed.size === 0) {
+    throw new Response("Trusted origin not configured", { status: 503 });
   }
-
-  const allowed = configured || new URL(req.url).origin;
-  if (origin.replace(/\/$/, "") !== allowed) {
-    throw new Response("Origin rejected", { status: 403 });
-  }
+  if (!allowed.has(origin)) throw new Response("Origin rejected", { status: 403 });
 }
 
 export async function readJsonLimited(req: Request, maxBytes = 32_768): Promise<unknown> {
