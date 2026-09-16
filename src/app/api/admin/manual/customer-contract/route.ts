@@ -20,7 +20,10 @@ const schema = z.object({
 export async function POST(req: Request) {
   try {
     assertTrustedOrigin(req);
-    await requireAdminApi();
+    const admin = await requireAdminApi();
+    if (!admin.role || !["OWNER", "ADMIN", "MANAGER"].includes(admin.role)) {
+      return Response.json({ error: "Este perfil não pode criar contratos em contingência manual." }, { status: 403 });
+    }
     const input = schema.parse(await readJsonLimited(req, 24_000));
     if (input.endDate && input.endDate < input.startDate) {
       return Response.json({ error: "A data final não pode ser anterior ao início do contrato." }, { status: 400 });
