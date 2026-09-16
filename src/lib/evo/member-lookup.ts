@@ -73,6 +73,10 @@ function normalizeCpf(value: unknown): string | undefined {
   return digits.length === 11 ? digits : undefined;
 }
 
+function cpfFromRecord(data: Record<string, unknown>) {
+  return normalizeCpf(data.cpf ?? data.CPF ?? data.document ?? data.documentNumber ?? data.documentId ?? data.cpfCnpj ?? data.cpf_cnpj ?? data.taxId);
+}
+
 function memberArray(raw: unknown): Record<string, unknown>[] {
   if (Array.isArray(raw)) return raw.map(objectOf);
   const root = objectOf(raw);
@@ -147,7 +151,7 @@ function mapProfile(raw: unknown, profile: EvoCredentialProfile): EvoMemberIdent
   const lastName = str(data.lastName ?? data.last_name);
   const name = str(data.name ?? data.fullName ?? data.full_name ?? data.memberName) || `${firstName} ${lastName}`.trim() || "Cliente";
   const birthDate = normalizeDate(data.birthDate ?? data.birth_date ?? data.dateOfBirth ?? data.dataNascimento ?? data.birthday ?? data.birthdate);
-  const cpf = normalizeCpf(data.cpf ?? data.CPF ?? data.document ?? data.documentNumber ?? data.documentId ?? data.cpfCnpj ?? data.cpf_cnpj ?? data.taxId);
+  const cpf = cpfFromRecord(data);
   if (!externalId || !email) return null;
   return { externalId, email, name, birthDate, cpf, profileKey: profile.key };
 }
@@ -177,7 +181,8 @@ async function findProfileFromBasic(profile: EvoCredentialProfile, filter: "docu
     filter,
     candidateCount: candidates.length,
     hasBirthDate: candidates.some(candidate => Boolean(basicCandidateBirthDate(candidate))),
-    hasEmail: candidates.some(candidate => Boolean(str(candidate.email ?? candidate.emailAddress ?? candidate.memberEmail)))
+    hasEmail: candidates.some(candidate => Boolean(str(candidate.email ?? candidate.emailAddress ?? candidate.memberEmail))),
+    hasDocument: candidates.some(candidate => Boolean(cpfFromRecord(candidate)))
   }));
 
   for (const candidate of candidates) {
@@ -185,7 +190,9 @@ async function findProfileFromBasic(profile: EvoCredentialProfile, filter: "docu
     if (!id) continue;
 
     const candidateBirthDate = basicCandidateBirthDate(candidate);
+    const candidateCpf = cpfFromRecord(candidate);
     if (expectedBirthDate && candidateBirthDate && candidateBirthDate !== expectedBirthDate) continue;
+    if (filter === "document" && candidateCpf && candidateCpf !== value) continue;
 
     const profilePath = configuredPath("EVO_MEMBER_PROFILE_PATH", "/api/v1/members/{idMember}", {
       id: id,
@@ -198,13 +205,17 @@ async function findProfileFromBasic(profile: EvoCredentialProfile, filter: "docu
       profile: profile.key,
       mapped: Boolean(member),
       hasBirthDate: Boolean(member?.birthDate || candidateBirthDate),
-      hasEmail: Boolean(member?.email)
+      hasEmail: Boolean(member?.email),
+      hasDocument: Boolean(member?.cpf || candidateCpf)
     }));
     if (!member) continue;
 
     const verifiedBirthDate = member.birthDate || candidateBirthDate;
+    const verifiedCpf = member.cpf || candidateCpf;
     if (expectedBirthDate && verifiedBirthDate !== expectedBirthDate) continue;
-    return { ...member, birthDate: verifiedBirthDate };
+    if (filter === "document" && verifiedCpf !== value) continue;
+    if (filter === "email" && member.email !== value) continue;
+    return { ...member, birthDate: verifiedBirthDate, cpf: verifiedCpf };
   }
   return null;
 }
@@ -219,7 +230,7 @@ export async function findEvoMemberByCpf(cpfInput: string, expectedBirthDate?: s
   for (const profile of profiles) {
     try {
       const match = await findProfileFromBasic(profile, "document", cpf, expectedBirthDate);
-      if (match) return { ...match, cpf };
+      if (match?.cpf === cpf) return match;
     } catch (error) {
       lastError = error;
       console.error(`[EVO_MEMBER_LOOKUP_${profile.key}]`, error instanceof Error ? error.message : error);
