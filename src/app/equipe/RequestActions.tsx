@@ -76,7 +76,6 @@ export default function RequestActions({ id, status, fee, estimatedRefund, refun
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          approvedAmount: estimatedRefund,
           executedAmount: numericAmount,
           method,
           transactionRef: reference.trim(),
@@ -103,7 +102,7 @@ export default function RequestActions({ id, status, fee, estimatedRefund, refun
     finally { setLoading(false); }
   }
 
-  const cancellableStatus = ["READY_TO_CANCEL", "MANUAL_REVIEW", "UNDER_REVIEW", "SIGNED_RECEIVED"].includes(status);
+  const cancellableStatus = ["READY_TO_CANCEL", "APPROVED", "MANUAL_REVIEW", "UNDER_REVIEW"].includes(status);
 
   return <div className="request-actions">
     {status === "FEE_PENDING" && <button disabled={loading} onClick={() => decision("CONFIRM_FEE_PAID")}>Confirmar taxa paga {fee > 0 ? `(R$ ${fee.toFixed(2).replace(".", ",")})` : ""}</button>}
