@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db/prisma";
 import { requireAdminApi } from "@/lib/auth/require-admin";
 import { assertTrustedOrigin, requestFingerprint } from "@/lib/security/request";
 import { validateSignedDocument } from "@/lib/documents/file-security";
+import { encryptBytes } from "@/lib/security/crypto";
 
 export async function POST(req: Request, context: { params: Promise<{ id: string }> }) {
   try {
@@ -18,6 +19,7 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
 
     const bytes = Buffer.from(await file.arrayBuffer());
     const meta = validateSignedDocument(file, bytes);
+    const encryptedContent = encryptBytes(bytes);
     const fingerprint = requestFingerprint(req);
 
     const att = await prisma.$transaction(async tx => {
@@ -27,8 +29,8 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
           type: "REFUND_RECEIPT",
           ...meta,
           malwareStatus: "VALIDATED",
-          content: bytes,
-          storageMode: "DATABASE",
+          content: encryptedContent,
+          storageMode: "DATABASE_ENCRYPTED_V1",
           uploadedBy: admin.sub
         }
       });
@@ -38,7 +40,7 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
           action: "REFUND_RECEIPT_UPLOADED",
           entity: "Attachment",
           entityId: attachment.id,
-          after: { sha256: meta.sha256, mimeType: meta.mimeType, sizeBytes: meta.sizeBytes, by: admin.sub },
+          after: { sha256: meta.sha256, mimeType: meta.mimeType, sizeBytes: meta.sizeBytes, storageMode: "DATABASE_ENCRYPTED_V1", by: admin.sub },
           ...fingerprint
         }
       });
