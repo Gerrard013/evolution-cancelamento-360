@@ -41,7 +41,7 @@ function objectOf(value: unknown): Record<string, unknown> {
 function firstObject(raw: unknown): Record<string, unknown> {
   if (Array.isArray(raw)) return objectOf(raw[0]);
   const root = objectOf(raw);
-  for (const key of ["data", "item", "result", "member", "customer", "cliente", "aluno"]) {
+  for (const key of ["data", "item", "result", "member", "customer", "cliente", "aluno", "list", "lista"]) {
     const value = root[key];
     if (Array.isArray(value)) return objectOf(value[0]);
     if (value && typeof value === "object") return objectOf(value);
@@ -80,12 +80,12 @@ function cpfFromRecord(data: Record<string, unknown>) {
 function memberArray(raw: unknown): Record<string, unknown>[] {
   if (Array.isArray(raw)) return raw.map(objectOf);
   const root = objectOf(raw);
-  for (const key of ["data", "items", "results", "members"]) {
+  for (const key of ["data", "items", "results", "members", "list", "lista"]) {
     const value = root[key];
     if (Array.isArray(value)) return value.map(objectOf);
     if (value && typeof value === "object") {
       const nested = objectOf(value);
-      for (const nestedKey of ["items", "results", "members", "data"]) {
+      for (const nestedKey of ["items", "results", "members", "data", "list", "lista"]) {
         if (Array.isArray(nested[nestedKey])) return (nested[nestedKey] as unknown[]).map(objectOf);
       }
     }
@@ -145,8 +145,8 @@ async function evoGet(path: string, profile: EvoCredentialProfile, params?: Reco
 
 function mapProfile(raw: unknown, profile: EvoCredentialProfile): EvoMemberIdentity | null {
   const data = firstObject(raw);
-  const externalId = str(data.idMember ?? data.memberId ?? data.id_member ?? data.id);
-  const email = str(data.email ?? data.emailAddress ?? data.memberEmail).toLowerCase();
+  const externalId = deepString(data, ["idMember", "memberId", "id_member", "id", "idCliente", "customerId", "idCustomer"]);
+  const email = deepString(data, ["email", "emailAddress", "memberEmail"]).toLowerCase();
   const firstName = str(data.firstName ?? data.first_name);
   const lastName = str(data.lastName ?? data.last_name);
   const name = str(data.name ?? data.fullName ?? data.full_name ?? data.memberName) || `${firstName} ${lastName}`.trim() || "Cliente";
@@ -156,8 +156,30 @@ function mapProfile(raw: unknown, profile: EvoCredentialProfile): EvoMemberIdent
   return { externalId, email, name, birthDate, cpf, profileKey: profile.key };
 }
 
+function deepString(value: unknown, keys: string[], depth = 0): string {
+  if (depth > 4 || !value || typeof value !== "object") return "";
+  const data = objectOf(value);
+  for (const key of keys) {
+    const direct = str(data[key]);
+    if (direct) return direct;
+  }
+  for (const child of Object.values(data)) {
+    if (!child || typeof child !== "object") continue;
+    if (Array.isArray(child)) {
+      for (const item of child.slice(0, 3)) {
+        const found = deepString(item, keys, depth + 1);
+        if (found) return found;
+      }
+    } else {
+      const found = deepString(child, keys, depth + 1);
+      if (found) return found;
+    }
+  }
+  return "";
+}
+
 function basicCandidateId(data: Record<string, unknown>) {
-  return str(data.idMember ?? data.memberId ?? data.id_member ?? data.id);
+  return deepString(data, ["idMember", "memberId", "id_member", "idCliente", "customerId", "idCustomer", "idClient", "idPessoa", "id"]);
 }
 
 function basicCandidateBirthDate(data: Record<string, unknown>) {
@@ -165,7 +187,7 @@ function basicCandidateBirthDate(data: Record<string, unknown>) {
 }
 
 async function findProfileFromBasic(profile: EvoCredentialProfile, filter: "document" | "email", value: string, expectedBirthDate?: string) {
-  const membersPath = configuredPath("EVO_MEMBERS_PATH", "/api/v1/members");
+  const membersPath = configuredPath("EVO_MEMBERS_PATH", "/api/v1/members/basic");
   const queryParam = filter === "document"
     ? configuredQueryParam("EVO_MEMBER_CPF_QUERY_PARAM", "document")
     : configuredQueryParam("EVO_MEMBER_EMAIL_QUERY_PARAM", "email");
@@ -180,6 +202,7 @@ async function findProfileFromBasic(profile: EvoCredentialProfile, filter: "docu
     profile: profile.key,
     filter,
     candidateCount: candidates.length,
+    hasMemberId: candidates.some(candidate => Boolean(basicCandidateId(candidate))),
     hasBirthDate: candidates.some(candidate => Boolean(basicCandidateBirthDate(candidate))),
     hasEmail: candidates.some(candidate => Boolean(str(candidate.email ?? candidate.emailAddress ?? candidate.memberEmail))),
     hasDocument: candidates.some(candidate => Boolean(cpfFromRecord(candidate)))
@@ -195,7 +218,7 @@ async function findProfileFromBasic(profile: EvoCredentialProfile, filter: "docu
     if (filter === "document" && candidateCpf && candidateCpf !== value) continue;
 
     const profilePath = configuredPath("EVO_MEMBER_PROFILE_PATH", "/api/v1/members/{idMember}", {
-      id: id,
+      id,
       idMember: id,
       memberId: id
     });
